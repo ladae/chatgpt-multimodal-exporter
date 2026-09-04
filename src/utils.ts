@@ -13,9 +13,53 @@ export const isInlinePointer = (p: string): boolean => {
   return prefixes.some((x) => p.startsWith(x));
 };
 
+export function resolveSedimentPointer(p: string): string | null {
+  if (!p || typeof p !== 'string' || !p.startsWith('sediment://')) return null;
+  const path = p.replace(/^sediment:\/\//, '').trim();
+
+  // 1. Check if contains file- or file_ identifier (allowing alphanumeric, dashes and underscores)
+  const fileMatch = path.match(/file[-_][0-9a-zA-Z_-]+/i);
+  if (fileMatch) return fileMatch[0];
+
+  // 2. Check if contains UUID
+  const uuidMatch = path.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  if (uuidMatch) return uuidMatch[0];
+
+  // 3. Extract last non-empty segment
+  const segments = path.split('/').filter(Boolean);
+  if (segments.length > 0) {
+    const last = segments[segments.length - 1].replace(/[?#].*$/, '');
+    if (last && last.length > 3) return last;
+  }
+  return null;
+}
+
+export function normalizeSandboxPointer(raw: string): string | null {
+  if (!raw || typeof raw !== 'string') return null;
+  let p = raw.trim();
+  p = p.replace(/^[`'"“”‘’(\[{<]+/, '');
+  if (!p.startsWith('sandbox:')) return null;
+
+  p = p.replace(/[`'"“”‘’()[\]{}<>.,;:!?*~_\\]+$/g, '');
+
+  const path = p.replace(/^sandbox:/, '').trim();
+  if (!path || path === '/' || path === '/mnt/data' || path === '/mnt/data/' || !path.includes('/')) {
+    return null;
+  }
+  if (path.endsWith('/')) {
+    return null;
+  }
+  return `sandbox:${path}`;
+}
+
 export const pointerToFileId = (p: string): string => {
   if (!p) return '';
   if (isInlinePointer(p)) return p; // already a CDN URL
+  if (p.startsWith('sediment://')) {
+    const resolved = resolveSedimentPointer(p);
+    if (resolved) return resolved;
+    return p.replace(/^sediment:\/\//, '');
+  }
   const m = p.match(/file[-_][0-9a-f]+/i);
   return m ? m[0] : p;
 };

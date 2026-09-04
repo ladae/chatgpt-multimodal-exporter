@@ -84,6 +84,9 @@ export interface FileCandidate {
   height?: number;
   role?: string;
   gizmo_id?: string | null;
+  library_file_id?: string | null;
+  candidate_type?: string;
+  download_url?: string;
 }
 
 export interface Project {
@@ -128,12 +131,22 @@ export interface ConversationMetadata {
     size_bytes: number | null;
     mime: string;
     source: string;
+    library_file_id?: string | null;
+    download_method?: string;
   }[];
   failed_attachments: {
-    pointer: string;
-    file_id: string;
+    pointer?: string;
+    file_id?: string;
+    library_file_id?: string | null;
+    original_name?: string;
+    source?: string;
+    candidate_type?: string;
+    message_id?: string;
+    download_method?: string;
     error: string;
+    http_status?: number | null;
   }[];
+  asset_ledger?: AssetLedgerEntry[];
 }
 
 export interface DownloadResult {
@@ -156,3 +169,118 @@ export interface UserProfile {
     data: any[];
   };
 }
+
+export type InventoryScope = 'regular' | 'project' | 'archived';
+
+export interface InventoryItem {
+  id: string; // conversation_id
+  title: string;
+  create_time?: number | string;
+  update_time: number | string;
+  projectId?: string;
+  workspaceId?: string;
+  scopes: InventoryScope[];
+  sourceDetails?: string[];
+}
+
+export interface ScopeInventoryResult {
+  scope: InventoryScope;
+  status: 'ok' | 'failed' | 'partial';
+  count: number;
+  error?: string;
+  subScopeDetails?: Record<string, { count: number; error?: string }>;
+}
+
+export interface InventoryReport {
+  timestamp: number;
+  complete: boolean;
+  items: InventoryItem[];
+  scopes: {
+    regular: ScopeInventoryResult;
+    projects: ScopeInventoryResult;
+    archived: ScopeInventoryResult;
+  };
+  errors: string[];
+}
+
+export interface AssetLedgerEntry {
+  conversation_id: string;
+  message_id: string | null;
+  candidate_type: string;
+  file_id: string | null;
+  library_file_id: string | null;
+  original_ref: string | null;
+  download_method: string;
+  status: 'success' | 'failure';
+  error: string | null;
+  http_status: number | null;
+  local_path: string | null;
+  size_bytes: number | null;
+  mime_type: string | null;
+  timestamp: number;
+}
+
+export type ScanValidationStatus =
+  | 'COMPLETE'
+  | 'COMPLETE_WITH_ASSET_ERRORS'
+  | 'INCOMPLETE_INVENTORY'
+  | 'INCOMPLETE_CONVERSATIONS'
+  | 'FAILED';
+
+export interface ScanReport {
+  status: ScanValidationStatus;
+  timestamp: number;
+  scan_mode: 'full' | 'incremental';
+  inventory: {
+    total_found: number;
+    complete: boolean;
+    scopes: {
+      regular: ScopeInventoryResult;
+      projects: ScopeInventoryResult;
+      archived: ScopeInventoryResult;
+    };
+    errors: string[];
+  };
+  conversations: {
+    expected_conversation_ids: string[];
+    saved_conversation_ids: string[];
+    failed_conversation_ids: string[];
+    missing_conversation_ids: string[];
+    details: {
+      conversation_id: string;
+      title: string;
+      scope: InventoryScope[];
+      status: 'saved' | 'failed' | 'missing';
+      error?: string;
+      asset_count?: number;
+      failed_assets?: number;
+    }[];
+  };
+  assets: {
+    total_candidates: number;
+    saved_count: number;
+    failed_count: number;
+    ledger: AssetLedgerEntry[];
+  };
+}
+
+// Runtime stubs for declaration merging (ensures ESM runtimes can import without error)
+export const Conversation = {};
+export const ConversationNode = {};
+export const Message = {};
+export const MessageContent = {};
+export const MessageMetadata = {};
+export const Attachment = {};
+export const FileCandidate = {};
+export const Project = {};
+export const Task = {};
+export const BatchExportSummary = {};
+export const ConversationMetadata = {};
+export const DownloadResult = {};
+export const UserProfile = {};
+export const InventoryItem = {};
+export const ScopeInventoryResult = {};
+export const InventoryReport = {};
+export const AssetLedgerEntry = {};
+export const ScanReport = {};
+

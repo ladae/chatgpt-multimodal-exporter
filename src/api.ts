@@ -1,6 +1,7 @@
 import { Cred } from './cred';
 import { projectId, sanitize, gmDownload, gmFetchBlob, inferFilename, fetchWithRetry } from './utils';
 import { Conversation, UserProfile } from './types';
+import { Logger } from './logger';
 
 export async function fetchConversation(id: string, projectId?: string): Promise<Conversation> {
   if (!Cred.token) {
@@ -103,6 +104,9 @@ export async function downloadSandboxFileBlob({
   const resp = await fetchWithRetry(url, { headers, credentials: 'include' });
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '');
+    if (txt.includes('ace_pod_expired')) {
+      throw new Error(`sandbox download meta 410: ace_pod_expired (Sandbox kontejner vypršel)`);
+    }
     throw new Error(`sandbox download meta ${resp.status}: ${txt.slice(0, 200)}`);
   }
   let j: any;
@@ -135,14 +139,29 @@ export async function fetchDownloadUrlOrResponse(
   headers: Headers,
   gizmoId?: string | null
 ): Promise<string | Response | null> {
-  const url = new URL(`${location.origin}/backend-api/files/download/${fileId}`);
-  url.searchParams.set('inline', 'false');
-  // Only append gizmo_id for Gizmo-owned files (starting with 'file-')
-  // User-uploaded files (starting with 'file_') fail if gizmo_id is present
-  if (gizmoId && fileId.startsWith('file-')) {
-    url.searchParams.set('gizmo_id', gizmoId);
+  const makeUrl = (gid?: string | null) => {
+    const u = new URL(`${location.origin}/backend-api/files/download/${fileId}`);
+    u.searchParams.set('inline', 'false');
+    // Only append gizmo_id for Gizmo-owned files (starting with 'file-')
+    // User-uploaded files (starting with 'file_') fail if gizmo_id is present
+    if (gid && fileId.startsWith('file-')) {
+      u.searchParams.set('gizmo_id', gid);
+    }
+    return u.toString();
+  };
+
+  let resp = await fetchWithRetry(makeUrl(gizmoId), { method: 'GET', headers, credentials: 'include' });
+
+  // If 403 Forbidden and gizmoId was passed, retry immediately without gizmoId!
+  // User library attachments in GPT conversations return 403 if gizmo_id is attached.
+  if (resp.status === 403 && gizmoId) {
+    Logger.debug('API', `Download ${fileId} with gizmo_id returned 403, retrying without gizmo_id...`);
+    const retryResp = await fetchWithRetry(makeUrl(null), { method: 'GET', headers, credentials: 'include' });
+    if (retryResp.ok || retryResp.status < 400) {
+      resp = retryResp;
+    }
   }
-  const resp = await fetchWithRetry(url.toString(), { method: 'GET', headers, credentials: 'include' });
+
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '');
     throw new Error(`download meta ${resp.status}: ${txt.slice(0, 200)}`);

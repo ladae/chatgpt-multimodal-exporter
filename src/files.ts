@@ -1,4 +1,4 @@
-import { pointerToFileId } from './utils';
+import { pointerToFileId, normalizeSandboxPointer, resolveSedimentPointer } from './utils';
 import { Conversation, FileCandidate, Message } from './types';
 
 export function collectFileCandidates(conv: Conversation): FileCandidate[] {
@@ -21,37 +21,63 @@ export function collectFileCandidates(conv: Conversation): FileCandidate[] {
     const c = msg.content || {};
 
     (meta.attachments || []).forEach((att) => {
-      if (!att || !att.id) return;
-      add(att.id, { source: 'attachment', meta: att });
+      if (!att) return;
+      const rawUrl = att.download_url || att.url;
+      const cleanUrl = (rawUrl && typeof rawUrl === 'string' && (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')))
+        ? rawUrl
+        : undefined;
+
+      let sedimentId: string | null = null;
+      if (rawUrl && typeof rawUrl === 'string' && rawUrl.startsWith('sediment://')) {
+        sedimentId = resolveSedimentPointer(rawUrl);
+      }
+
+      // Prefer file_ id starting with file- or file_, or library_file_id, or att.id, or sedimentId
+      const primaryId = (att.id && (att.id.startsWith('file-') || att.id.startsWith('file_')))
+        ? att.id
+        : (att.library_file_id || att.file_id || sedimentId || att.id);
+      if (!primaryId) return;
+
+      add(primaryId, {
+        source: 'attachment',
+        candidate_type: 'attachment',
+        meta: att,
+        message_id: msg.id,
+        library_file_id: att.library_file_id || null,
+        name: att.name || att.file_name,
+        mime_type: att.mime_type || att.mime,
+        size_bytes: att.size || att.size_bytes,
+        download_url: cleanUrl,
+      });
     });
 
     const crefByFile = meta.content_references_by_file || {};
     Object.values(crefByFile)
       .flat()
       .forEach((ref) => {
-        if (ref?.file_id) add(ref.file_id, { source: 'cref', meta: ref, message_id: msg.id });
+        if (ref?.file_id) add(ref.file_id, { source: 'cref', candidate_type: 'cref', meta: ref, message_id: msg.id });
         if (ref?.asset_pointer) {
           const fid = pointerToFileId(ref.asset_pointer);
-          add(fid, { source: 'cref-pointer', pointer: ref.asset_pointer, meta: ref, message_id: msg.id });
+          add(fid, { source: 'cref-pointer', candidate_type: 'cref-pointer', pointer: ref.asset_pointer, meta: ref, message_id: msg.id });
         }
       });
 
     const n7 = meta.n7jupd_crefs_by_file || meta.n7jupd_crefs || {};
     const n7list = Array.isArray(n7) ? n7 : Object.values(n7).flat();
     n7list.forEach((ref) => {
-      if (ref?.file_id) add(ref.file_id, { source: 'n7jupd-cref', meta: ref, message_id: msg.id });
+      if (ref?.file_id) add(ref.file_id, { source: 'n7jupd-cref', candidate_type: 'n7jupd-cref', meta: ref, message_id: msg.id });
     });
 
     if (Array.isArray(c.parts)) {
       c.parts.forEach((part) => {
         if (part && typeof part === 'object' && part.content_type && part.asset_pointer) {
           const fid = pointerToFileId(part.asset_pointer);
-          add(fid, { source: part.content_type, pointer: part.asset_pointer, meta: part, message_id: msg.id });
+          add(fid, { source: part.content_type, candidate_type: part.content_type, pointer: part.asset_pointer, meta: part, message_id: msg.id });
         }
         if (part && typeof part === 'object' && part.audio_asset_pointer && part.audio_asset_pointer.asset_pointer) {
           const ap = part.audio_asset_pointer;
           const fid = pointerToFileId(ap.asset_pointer);
-          add(fid, { source: 'voice-audio', pointer: ap.asset_pointer, meta: ap, message_id: msg.id });
+          add(fid, { source: 'voice-audio', candidate_type: 'voice-audio', pointer: ap.asset_pointer, meta: ap, message_id: msg.id });
         }
       });
     }
@@ -62,11 +88,14 @@ export function collectFileCandidates(conv: Conversation): FileCandidate[] {
         const matches = txt.match(/\{\{file:([^}]+)\}\}/g) || [];
         matches.forEach((tok) => {
           const fid = tok.slice(7, -2);
-          add(fid, { source: 'inline-placeholder', message_id: msg.id });
+          add(fid, { source: 'inline-placeholder', candidate_type: 'inline-placeholder', message_id: msg.id });
         });
-        const sandboxLinks = txt.match(/sandbox:[^\s\)\]]+/g) || [];
+        const sandboxLinks = txt.match(/sandbox:[^\s\)]+/g) || [];
         sandboxLinks.forEach((s) => {
-          add(s, { source: 'sandbox-link', pointer: s, message_id: msg.id });
+          const cleanS = normalizeSandboxPointer(s);
+          if (cleanS) {
+            add(cleanS, { source: 'sandbox-link', candidate_type: 'sandbox-link', pointer: cleanS, message_id: msg.id });
+          }
         });
       });
     }
@@ -113,8 +142,14 @@ export function extractImages(conv: Conversation): FileCandidate[] {
         if (part && typeof part === 'object' && part.content_type === 'image_asset_pointer') {
           const pointer = part.asset_pointer || '';
           let fileId = '';
-          const m = pointer.match(/file_[0-9a-f]+/i);
-          if (m) fileId = m[0];
+          if (pointer.startsWith('sediment://')) {
+            const resolved = resolveSedimentPointer(pointer);
+            if (resolved) fileId = resolved;
+          }
+          if (!fileId) {
+            const m = pointer.match(/file[-_][0-9a-f]+/i);
+            if (m) fileId = m[0];
+          }
           const keyId = fileId || pointer;
           if (seen.has(keyId)) continue;
           seen.add(keyId);

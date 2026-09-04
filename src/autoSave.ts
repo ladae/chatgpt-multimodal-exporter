@@ -1,15 +1,16 @@
-import { listConversationsPage, listGizmosSidebar, listProjectConversations, fetchConvWithRetry, scanPagination } from './conversations';
+import { fetchConvWithRetry } from './conversations';
 import { Cred } from './cred';
 import { loadState, updateConversationState, updateWorkspaceCheckTime, updateGizmoCheckTime, saveState } from './autoSaveState';
-import { getRootHandle, verifyPermission, ensureFolder, writeFile, fileExists } from './fileSystem';
+import { getRootHandle, verifyPermission, ensureFolder, writeFile } from './fileSystem';
 import { collectFileCandidates } from './files';
-import { downloadPointerOrFileAsBlob } from './downloads';
-import { sanitize } from './utils';
-import { Conversation } from './types';
+import { Conversation, ConversationMetadata, AssetLedgerEntry } from './types';
 import { Logger } from './logger';
 import { autoSaveStore, AutoSaveState } from './state/autoSaveStore';
 import { runExclusiveStateOp, tryAcquireLeader } from './mutex';
 import { generateHTML } from './htmlGenerator';
+import { buildConversationInventory } from './inventory';
+import { downloadCandidateWithLedger } from './assetLedger';
+import { buildScanReport, saveScanReport } from './validation';
 
 // Re-export file system helpers for UI
 export { pickAndSaveRootHandle, getRootHandle } from './fileSystem';
@@ -30,8 +31,9 @@ async function saveConversationToDisk(
     userFolder: FileSystemDirectoryHandle,
     conv: Conversation,
     workspaceName: string,
-    categoryName: string
-) {
+    categoryName: string,
+    runAssetLedger?: AssetLedgerEntry[]
+): Promise<{ total: number; saved: number; failed: number }> {
     const id = conv.conversation_id;
 
     // 1. Ensure Workspace Folder (Personal or WorkspaceID)
@@ -48,59 +50,47 @@ async function saveConversationToDisk(
     await writeFile(convFolder, 'conversation.json', JSON.stringify(conv, null, 2));
 
     // 2. Save metadata.json
-    const meta = {
+    const meta: ConversationMetadata = {
         id: conv.conversation_id,
         title: conv.title,
         create_time: conv.create_time,
         update_time: conv.update_time,
         model_slug: conv.default_model_slug,
-        attachments: [] as any[],
+        attachments: [],
+        failed_attachments: [],
+        asset_ledger: [],
     };
 
-    // 3. Save attachments
+    // 3. Save attachments with asset ledger
     const candidates = collectFileCandidates(conv);
+    let savedAssets = 0;
+    let failedAssets = 0;
+
     if (candidates.length > 0) {
         const attFolder = await ensureFolder(convFolder, 'attachments');
         for (const c of candidates) {
-            try {
-                let predictedName = '';
-                if (c.meta && (c.meta.name || c.meta.file_name)) {
-                    predictedName = sanitize(c.meta.name || c.meta.file_name);
-                }
+            const { entry, entries, savedMeta } = await downloadCandidateWithLedger(c, attFolder);
+            const allEntries = entries && entries.length > 0 ? entries : [entry];
+            for (const e of allEntries) {
+                if (meta.asset_ledger) meta.asset_ledger.push(e);
+                if (runAssetLedger) runAssetLedger.push(e);
+            }
 
-                if (predictedName && await fileExists(attFolder, predictedName)) {
-                    const mime = c.meta?.mime_type || c.meta?.mime || 'application/octet-stream';
-                    meta.attachments.push({
-                        file_id: c.file_id,
-                        name: predictedName,
-                        mime: mime,
-                    });
-                    Logger.debug('AutoSave', `Attachment exists (predicted): ${predictedName}`);
-                    continue;
-                }
-
-                const res = await downloadPointerOrFileAsBlob(c);
-                const safeName = sanitize(res.filename);
-
-                if (predictedName !== safeName && await fileExists(attFolder, safeName)) {
-                    meta.attachments.push({
-                        file_id: c.file_id,
-                        name: safeName,
-                        mime: res.mime,
-                    });
-                    Logger.debug('AutoSave', `Attachment exists (resolved): ${safeName}`);
-                    continue;
-                }
-
-                await writeFile(attFolder, safeName, res.blob);
-                meta.attachments.push({
-                    file_id: c.file_id,
-                    name: safeName,
-                    mime: res.mime,
+            if (savedMeta) {
+                meta.attachments.push(savedMeta);
+                savedAssets++;
+            } else {
+                meta.failed_attachments.push({
+                    pointer: entry.original_ref || undefined,
+                    file_id: entry.file_id || undefined,
+                    library_file_id: entry.library_file_id,
+                    source: entry.candidate_type,
+                    candidate_type: entry.candidate_type,
+                    download_method: entry.download_method,
+                    error: entry.error || 'unknown',
+                    http_status: entry.http_status,
                 });
-                Logger.debug('AutoSave', `Saved attachment: ${safeName}`);
-            } catch (e) {
-                Logger.warn('AutoSave', 'Failed to save attachment', c, e);
+                failedAssets++;
             }
         }
     }
@@ -114,6 +104,8 @@ async function saveConversationToDisk(
     } catch (e) {
         Logger.warn('AutoSave', 'Failed to generate HTML', e);
     }
+
+    return { total: candidates.length, saved: savedAssets, failed: failedAssets };
 }
 
 async function resolveConversationFolderName(
@@ -155,7 +147,7 @@ export async function runAutoSaveCycle(forceFullScan = false) {
     }
 
     const modeLabel = forceFullScan ? 'Úplné skenování' : 'Auto-save';
-    autoSaveStore.setStatus('checking', `${modeLabel}: Checking for updates...`);
+    autoSaveStore.setStatus('checking', `${modeLabel}: Probíhá inventarizace konverzací...`);
     Logger.info('AutoSave', `Starting ${modeLabel} cycle`);
 
     try {
@@ -163,7 +155,7 @@ export async function runAutoSaveCycle(forceFullScan = false) {
         await runExclusiveStateOp(async () => {
             // Strict check: User must be identified by email
             if (!Cred.userLabel) {
-                throw new Error('User email not found (Strict Mode)');
+                throw new Error('Uživatelský email nenalezen (Strict Mode)');
             }
 
             // Ensure User folder (Email)
@@ -181,136 +173,181 @@ export async function runAutoSaveCycle(forceFullScan = false) {
                 await saveState(state, userFolder);
             }
 
-            const candidates: { id: string; projectId?: string; update_time: string; folder: string, workspaceKey: string }[] = [];
             const currentWorkspaceId = Cred.accountId;
-
-            // Track check time for this workspace context
             let currentWorkspaceKey = 'personal';
             if (currentWorkspaceId && currentWorkspaceId !== 'personal' && currentWorkspaceId !== 'x') {
                 currentWorkspaceKey = currentWorkspaceId;
             }
             await updateWorkspaceCheckTime(userFolder, currentWorkspaceKey);
 
-            // Helper to generate candidate processor
-            const createProcessor = (
-                folderResolver: (item: any) => string,
-                workspaceKey: string,
-                projectId?: string
-            ) => {
-                return async (items: any[]) => {
-                    let hasNewInPage = false;
-                    for (const item of items) {
-                        const local = state.conversations[item.id];
-                        const remoteTime = item.update_time ? new Date(item.update_time).getTime() : Date.now();
+            // Step 1: Build Complete Inventory
+            const inventoryReport = await buildConversationInventory({
+                includeArchived: true,
+                includeProjects: true,
+                progressCb: (statusText) => {
+                    autoSaveStore.setStatus('checking', `${modeLabel}: ${statusText}`);
+                }
+            });
 
-                        // Determine folder name
-                        const folderName = folderResolver(item);
-
-                        if (forceFullScan || !local || remoteTime > local.update_time) {
-                            candidates.push({
-                                id: item.id,
-                                projectId: projectId,
-                                update_time: item.update_time,
-                                folder: folderName,
-                                workspaceKey: workspaceKey
-                            });
-                            hasNewInPage = true;
-                        }
-                    }
-
-                    // Stop scanning if NOT full scan and NO new items in this page
-                    // (Assuming chronological order, older items are clean)
-                    if (!forceFullScan && !hasNewInPage) {
-                        return false;
-                    }
-                    return true;
-                };
-            };
-
-            // 1. Check Personal/Workspace Conversations
-            // Personal Fetcher wrapper
-            const personalFetcher = (offset: number, limit: number) => listConversationsPage({ offset, limit, order: 'updated' });
-
-            const personalProcessor = createProcessor((item) => {
-                if (item.workspace_id) return item.workspace_id;
-                if (currentWorkspaceId && currentWorkspaceId !== 'x') return currentWorkspaceId;
-                return 'Personal';
-            }, currentWorkspaceKey);
-
-            await scanPagination(personalFetcher, personalProcessor, 0, 20);
-
-            // 2. Check Projects (Gizmos)
-            const sidebar = await listGizmosSidebar();
-            const projects = new Set<string>();
-
-            if (sidebar?.gizmos) {
-                sidebar.gizmos.forEach((g: any) => g.id && projects.add(g.id));
-            }
-            if (sidebar?.items) {
-                sidebar.items.forEach((it: any) => {
-                    const gid = it?.gizmo?.gizmo?.id || it?.gizmo?.id;
-                    if (gid) projects.add(gid);
-                });
+            // Update gizmo check times in state for discovered projects
+            if (inventoryReport.scopes.projects.subScopeDetails) {
+                for (const pid of Object.keys(inventoryReport.scopes.projects.subScopeDetails)) {
+                    await updateGizmoCheckTime(userFolder, currentWorkspaceKey, pid);
+                }
             }
 
-            for (const pid of projects) {
-                await updateGizmoCheckTime(userFolder, currentWorkspaceKey, pid);
+            // Step 2: Determine Candidates for saving
+            const candidates = inventoryReport.items.filter((item) => {
+                if (forceFullScan) return true;
+                const local = state.conversations[item.id];
+                if (!local) return true;
+                const remoteTime = item.update_time ? new Date(item.update_time).getTime() : 0;
+                return remoteTime > local.update_time;
+            });
 
-                const projFetcher = (cursor: number, limit: number) => listProjectConversations({ projectId: pid, cursor, limit });
-                const projProcessor = createProcessor(() => pid, currentWorkspaceKey, pid);
-
-                await scanPagination(projFetcher, projProcessor, 0, 50);
-            }
+            const expected_conversation_ids = candidates.map(c => c.id);
+            const saved_conversation_ids: string[] = [];
+            const failed_conversation_ids: string[] = [];
+            const chatDetails: {
+                conversation_id: string;
+                title: string;
+                scope: any[];
+                status: 'saved' | 'failed' | 'missing';
+                error?: string;
+                asset_count?: number;
+                failed_assets?: number;
+            }[] = [];
+            const runAssetLedger: AssetLedgerEntry[] = [];
 
             if (candidates.length === 0) {
-                autoSaveStore.setStatus('idle', 'Nebyly nalezeny žádné změny');
-                autoSaveStore.setLastRun(Date.now());
-                Logger.info('AutoSave', 'Nebyly nalezeny žádné změny');
+                // If inventory had error, report it!
+                const scanReport = buildScanReport({
+                    scanMode: forceFullScan ? 'full' : 'incremental',
+                    inventoryReport,
+                    expectedIds: [],
+                    savedIds: [],
+                    failedIds: [],
+                    missingIds: [],
+                    chatDetails: [],
+                    assetLedger: [],
+                });
+                await saveScanReport(userFolder, scanReport);
+
+                if (scanReport.status === 'COMPLETE') {
+                    autoSaveStore.setStatus('idle', 'Nebyly nalezeny žádné změny');
+                    autoSaveStore.setLastRun(Date.now());
+                    autoSaveStore.resetError();
+                } else if (scanReport.status === 'INCOMPLETE_INVENTORY') {
+                    autoSaveStore.setError(`Nekompletní inventář (${inventoryReport.errors[0] || 'Chyba'})`);
+                } else {
+                    autoSaveStore.setStatus('idle', `Stav scanu: ${scanReport.status}`);
+                    autoSaveStore.setLastRun(Date.now());
+                }
+                Logger.info('AutoSave', `Cycle finished with status ${scanReport.status}`);
                 return;
             }
 
-            autoSaveStore.setStatus('saving', `Saving ${candidates.length} conversations...`);
-            Logger.info('AutoSave', `Found ${candidates.length} updates`);
+            autoSaveStore.setStatus('saving', `Ukládání ${candidates.length} konverzací...`);
+            Logger.info('AutoSave', `Found ${candidates.length} updates to process`);
 
             const REGULAR_FOLDER = 'conversations';
 
+            // Step 3: Process Each Conversation with Error Isolation
             for (let i = 0; i < candidates.length; i++) {
                 const c = candidates[i];
-                // category is project ID or 'conversations'
                 const category = c.projectId || REGULAR_FOLDER;
+                const wsFolderName = (c.workspaceId && c.workspaceId !== 'personal' && c.workspaceId !== 'x')
+                    ? c.workspaceId
+                    : (currentWorkspaceId && currentWorkspaceId !== 'personal' && currentWorkspaceId !== 'x' ? currentWorkspaceId : 'Personal');
 
-                const typeStr = c.projectId ? `[Gizmo ${c.projectId}]` : `[${c.workspaceKey}]`;
-                autoSaveStore.setStatus('saving', `Saving ${i + 1}/${candidates.length}: ${typeStr} ${c.id}`);
-                Logger.info('AutoSave', `Saving ${c.id} to ${c.workspaceKey}/${category}`);
+                const typeStr = c.projectId ? `[Gizmo ${c.projectId}]` : `[${wsFolderName}]`;
+                autoSaveStore.setStatus('saving', `Ukládání ${i + 1}/${candidates.length}: ${typeStr} ${c.id}`);
+                Logger.info('AutoSave', `Saving ${c.id} to ${wsFolderName}/${category}`);
 
-                const conv = await fetchConvWithRetry(c.id, c.projectId);
+                try {
+                    const conv = await fetchConvWithRetry(c.id, c.projectId);
+                    const assetResults = await saveConversationToDisk(
+                        userFolder,
+                        conv,
+                        wsFolderName,
+                        category,
+                        runAssetLedger
+                    );
 
-                // Determine workspace folder name: 'Personal' or the workspace ID
-                let wsFolderName = 'Personal';
-                if (c.workspaceKey && c.workspaceKey !== 'personal') {
-                    wsFolderName = c.workspaceKey;
+                    await updateConversationState(
+                        userFolder,
+                        c.id,
+                        new Date(c.update_time).getTime() || Date.now(),
+                        Date.now(),
+                        wsFolderName,
+                        c.projectId
+                    );
+
+                    saved_conversation_ids.push(c.id);
+                    chatDetails.push({
+                        conversation_id: c.id,
+                        title: conv.title || c.title,
+                        scope: c.scopes,
+                        status: 'saved',
+                        asset_count: assetResults.total,
+                        failed_assets: assetResults.failed,
+                    });
+                } catch (chatErr: any) {
+                    const errStr = chatErr?.message || String(chatErr);
+                    Logger.error('AutoSave', `Chyba při ukládání konverzace ${c.id}`, chatErr);
+                    failed_conversation_ids.push(c.id);
+                    chatDetails.push({
+                        conversation_id: c.id,
+                        title: c.title,
+                        scope: c.scopes,
+                        status: 'failed',
+                        error: errStr,
+                    });
                 }
-
-                await saveConversationToDisk(userFolder, conv, wsFolderName, category);
-
-                await updateConversationState(
-                    userFolder,
-                    c.id,
-                    new Date(c.update_time).getTime(),
-                    Date.now(),
-                    c.workspaceKey,
-                    c.projectId
-                );
             }
 
-            autoSaveStore.setStatus('idle', 'Vše uloženo');
-            autoSaveStore.setLastRun(Date.now());
-            autoSaveStore.resetError();
-            Logger.info('AutoSave', 'Cycle completed successfully');
-        });
+            // Step 4: Missing IDs and Fail-Closed Validation
+            const missing_conversation_ids = expected_conversation_ids.filter(
+                id => !saved_conversation_ids.includes(id) && !failed_conversation_ids.includes(id)
+            );
 
+            const scanReport = buildScanReport({
+                scanMode: forceFullScan ? 'full' : 'incremental',
+                inventoryReport,
+                expectedIds: expected_conversation_ids,
+                savedIds: saved_conversation_ids,
+                failedIds: failed_conversation_ids,
+                missingIds: missing_conversation_ids,
+                chatDetails,
+                assetLedger: runAssetLedger,
+            });
+
+            await saveScanReport(userFolder, scanReport);
+
+            // Step 5: Update Store Status according to Fail-Closed Validation
+            autoSaveStore.setLastRun(Date.now());
+
+            if (scanReport.status === 'COMPLETE') {
+                autoSaveStore.setStatus('idle', `Vše uloženo (${saved_conversation_ids.length} chatů, ${runAssetLedger.length} souborů)`);
+                autoSaveStore.resetError();
+                Logger.info('AutoSave', 'Cycle completed successfully (COMPLETE)');
+            } else if (scanReport.status === 'COMPLETE_WITH_ASSET_ERRORS') {
+                autoSaveStore.setStatus('idle', `Uloženo s chybami souborů (${scanReport.assets.failed_count} chyb)`);
+                autoSaveStore.resetError();
+                Logger.warn('AutoSave', 'Cycle completed with asset errors (COMPLETE_WITH_ASSET_ERRORS)');
+            } else if (scanReport.status === 'INCOMPLETE_CONVERSATIONS') {
+                autoSaveStore.setError(`Nekompletní: Selhalo ${failed_conversation_ids.length} konverzací`);
+                Logger.error('AutoSave', `Cycle incomplete: ${failed_conversation_ids.length} failed, ${missing_conversation_ids.length} missing`);
+            } else if (scanReport.status === 'INCOMPLETE_INVENTORY') {
+                autoSaveStore.setError(`Nekompletní inventář (${inventoryReport.errors[0] || 'Chyba'})`);
+                Logger.error('AutoSave', `Cycle incomplete inventory: ${inventoryReport.errors.join('; ')}`);
+            } else {
+                autoSaveStore.setError(`Běh selhal: ${scanReport.status}`);
+                Logger.error('AutoSave', `Cycle failed: ${scanReport.status}`);
+            }
+        });
     } catch (e: any) {
-        Logger.error('AutoSave', 'Auto-save failed', e);
+        Logger.error('AutoSave', 'Auto-save fatal error', e);
         autoSaveStore.setError(e.message || 'Neznámá chyba');
     }
 }
