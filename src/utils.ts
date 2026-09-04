@@ -2,7 +2,22 @@ import { GM_download, GM_xmlhttpRequest } from 'vite-plugin-monkey/dist/client';
 
 
 
-export const sanitize = (s: string): string => (s || '').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80);
+const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+
+export const sanitize = (s: string): string => {
+  if (!s || typeof s !== 'string') return 'untitled';
+  // 1. Remove control characters and illegal filesystem characters
+  let cleaned = s.replace(/[\x00-\x1f\x7f\\/:*?"<>|]+/g, '_').trim();
+  // 2. Strip trailing dots and spaces (strictly prohibited on Windows / File System Access API)
+  cleaned = cleaned.replace(/[. ]+$/, '');
+  // 3. Fallback if string is empty
+  if (!cleaned) cleaned = 'untitled';
+  // 4. Prefix DOS reserved device names (con, prn, aux, nul, com1-9, lpt1-9)
+  if (WINDOWS_RESERVED_NAMES.test(cleaned)) {
+    cleaned = `_${cleaned}`;
+  }
+  return cleaned.slice(0, 80);
+};
 
 export const isInlinePointer = (p: string): boolean => {
   if (!p) return false;
@@ -60,7 +75,12 @@ export const pointerToFileId = (p: string): string => {
     if (resolved) return resolved;
     return p.replace(/^sediment:\/\//, '');
   }
-  const m = p.match(/file[-_][0-9a-f]+/i);
+  if (p.startsWith('file-service://')) {
+    const withoutScheme = p.replace(/^file-service:\/\//, '').trim();
+    const m = withoutScheme.match(/file[-_][0-9a-zA-Z_-]+/i);
+    return m ? m[0] : withoutScheme;
+  }
+  const m = p.match(/file[-_][0-9a-zA-Z_-]+/i);
   return m ? m[0] : p;
 };
 
@@ -176,8 +196,8 @@ const HAS_EXT_RE = /\.[^./\\]+$/;
 export function inferFilename(name: string, fallbackId: string, mime: string): string {
   const base = sanitize(name || '') || sanitize(fallbackId || '') || 'untitled';
   const ext = fileExtFromMime(mime || '');
-  if (!ext || HAS_EXT_RE.test(base)) return base;
-  return `${base}${ext}`;
+  if (!ext || HAS_EXT_RE.test(base)) return sanitize(base);
+  return sanitize(`${base}${ext}`);
 }
 
 

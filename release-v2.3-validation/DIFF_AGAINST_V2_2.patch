@@ -1,0 +1,368 @@
+diff --git a/src/api.ts b/src/api.ts
+index 98649b1..1ad5cc8 100644
+--- a/src/api.ts
++++ b/src/api.ts
+@@ -1,5 +1,5 @@
+ import { Cred } from './cred';
+-import { projectId, sanitize, gmDownload, gmFetchBlob, inferFilename, fetchWithRetry } from './utils';
++import { projectId, sanitize, gmDownload, gmFetchBlob, inferFilename, fetchWithRetry, sleep } from './utils';
+ import { Conversation, UserProfile } from './types';
+ import { Logger } from './logger';
+ 
+@@ -62,20 +62,48 @@ export async function downloadSandboxFile({
+     sandbox_path: sandboxPath.replace(/^sandbox:/, ''),
+   });
+   const url = `${location.origin}/backend-api/conversation/${conversationId}/interpreter/download?${params.toString()}`;
+-  const resp = await fetchWithRetry(url, { headers, credentials: 'include' });
+-  if (!resp.ok) {
+-    const txt = await resp.text().catch(() => '');
+-    throw new Error(`sandbox download meta ${resp.status}: ${txt.slice(0, 200)}`);
++
++  const maxRetries = 4;
++  let dl: string | null = null;
++  let lastJson: any = null;
++  let attemptsUsed = 0;
++
++  for (let attempt = 0; attempt <= maxRetries; attempt++) {
++    attemptsUsed = attempt + 1;
++    const resp = await fetchWithRetry(url, { headers, credentials: 'include' });
++    if (!resp.ok) {
++      const txt = await resp.text().catch(() => '');
++      throw new Error(`sandbox download meta ${resp.status}: ${txt.slice(0, 200)}`);
++    }
++    let j: any;
++    try {
++      j = await resp.json();
++    } catch (e) {
++      throw new Error('Metadata sandbox download nejsou JSON');
++    }
++    lastJson = j;
++    if (j.download_url) {
++      dl = j.download_url;
++      break;
++    }
++    if (j.status === 'retry') {
++      if (attempt < maxRetries) {
++        const waitMs = 1000 * (attempt + 1);
++        Logger.warn('API', `Sandbox vrátil {"status":"retry"} (pokus ${attemptsUsed}/${maxRetries + 1}). Čekám ${waitMs}ms před opakováním...`);
++        await sleep(waitMs);
++        continue;
++      }
++    }
+   }
+-  let j: any;
+-  try {
+-    j = await resp.json();
+-  } catch (e) {
+-    throw new Error('Metadata sandbox download nejsou JSON');
++
++  if (!dl) {
++    if (lastJson?.status === 'retry') {
++      throw new Error(`sandbox download retry vyčerpán (pokusů: ${attemptsUsed}): status="retry" (Sandbox stále připravuje soubor)`);
++    }
++    throw new Error(`Sandbox download_url chybí (pokusů: ${attemptsUsed}): ${JSON.stringify(lastJson).slice(0, 200)}`);
+   }
+-  const dl = j.download_url;
+-  if (!dl) throw new Error(`Sandbox download_url chybí: ${JSON.stringify(j).slice(0, 200)}`);
+-  const fname = sanitize(j.file_name || sandboxPath.split('/').pop() || 'sandbox_file');
++
++  const fname = sanitize(lastJson.file_name || sandboxPath.split('/').pop() || 'sandbox_file');
+   await gmDownload(dl, fname);
+ }
+ 
+@@ -101,26 +129,54 @@ export async function downloadSandboxFileBlob({
+     sandbox_path: sandboxPath.replace(/^sandbox:/, ''),
+   });
+   const url = `${location.origin}/backend-api/conversation/${conversationId}/interpreter/download?${params.toString()}`;
+-  const resp = await fetchWithRetry(url, { headers, credentials: 'include' });
+-  if (!resp.ok) {
+-    const txt = await resp.text().catch(() => '');
+-    if (txt.includes('ace_pod_expired')) {
+-      throw new Error(`sandbox download meta 410: ace_pod_expired (Sandbox kontejner vypršel)`);
++
++  const maxRetries = 4;
++  let dl: string | null = null;
++  let lastJson: any = null;
++  let attemptsUsed = 0;
++
++  for (let attempt = 0; attempt <= maxRetries; attempt++) {
++    attemptsUsed = attempt + 1;
++    const resp = await fetchWithRetry(url, { headers, credentials: 'include' });
++    if (!resp.ok) {
++      const txt = await resp.text().catch(() => '');
++      if (txt.includes('ace_pod_expired')) {
++        throw new Error(`sandbox download meta 410: ace_pod_expired (Sandbox kontejner vypršel)`);
++      }
++      throw new Error(`sandbox download meta ${resp.status}: ${txt.slice(0, 200)}`);
++    }
++    let j: any;
++    try {
++      j = await resp.json();
++    } catch (e) {
++      throw new Error('Metadata sandbox download nejsou JSON');
++    }
++    lastJson = j;
++    if (j.download_url) {
++      dl = j.download_url;
++      break;
++    }
++    if (j.status === 'retry') {
++      if (attempt < maxRetries) {
++        const waitMs = 1000 * (attempt + 1);
++        Logger.warn('API', `Sandbox vrátil {"status":"retry"} (pokus ${attemptsUsed}/${maxRetries + 1}). Čekám ${waitMs}ms před opakováním...`);
++        await sleep(waitMs);
++        continue;
++      }
+     }
+-    throw new Error(`sandbox download meta ${resp.status}: ${txt.slice(0, 200)}`);
+   }
+-  let j: any;
+-  try {
+-    j = await resp.json();
+-  } catch (e) {
+-    throw new Error('Metadata sandbox download nejsou JSON');
++
++  if (!dl) {
++    if (lastJson?.status === 'retry') {
++      throw new Error(`sandbox download retry vyčerpán (pokusů: ${attemptsUsed}): status="retry" (Sandbox stále připravuje soubor)`);
++    }
++    throw new Error(`Sandbox download_url chybí (pokusů: ${attemptsUsed}): ${JSON.stringify(lastJson).slice(0, 200)}`);
+   }
+-  const dl = j.download_url;
+-  if (!dl) throw new Error(`Sandbox download_url chybí: ${JSON.stringify(j).slice(0, 200)}`);
++
+   const gmHeaders = {};
+   const res = await gmFetchBlob(dl, gmHeaders);
+   const fname = inferFilename(
+-    j.file_name || sandboxPath.split('/').pop() || 'sandbox_file',
++    lastJson.file_name || sandboxPath.split('/').pop() || 'sandbox_file',
+     sandboxPath,
+     res.mime || ''
+   );
+diff --git a/src/assetLedger.ts b/src/assetLedger.ts
+index 409ced8..1e45397 100644
+--- a/src/assetLedger.ts
++++ b/src/assetLedger.ts
+@@ -1,6 +1,6 @@
+ import { FileCandidate, AssetLedgerEntry } from './types';
+ import { fileExists, writeFile } from './fileSystem';
+-import { sanitize, isInlinePointer, inferFilename, gmFetchBlob, normalizeSandboxPointer, resolveSedimentPointer } from './utils';
++import { sanitize, isInlinePointer, inferFilename, gmFetchBlob, normalizeSandboxPointer, resolveSedimentPointer, pointerToFileId } from './utils';
+ import { Cred } from './cred';
+ import { downloadSandboxFileBlob, fetchDownloadUrlOrResponse, fetchFileMeta } from './api';
+ import { Logger } from './logger';
+@@ -45,7 +45,7 @@ export async function downloadCandidateWithLedger(
+   const messageId = candidate.message_id || null;
+   const candidateType = candidate.candidate_type || candidate.source || 'unknown';
+   let fileId = candidate.file_id || null;
+-  const libraryFileId = candidate.library_file_id || null;
++  let libraryFileId = candidate.library_file_id || null;
+   const pointer = candidate.pointer || null;
+   const originalRef = pointer || fileId || libraryFileId || candidate.download_url || null;
+ 
+@@ -234,6 +234,17 @@ export async function downloadCandidateWithLedger(
+     }
+   }
+ 
++  // Resolve file-service:// if present in fileId, libraryFileId or pointer
++  if (fileId && fileId.startsWith('file-service://')) {
++    fileId = pointerToFileId(fileId);
++  }
++  if (libraryFileId && libraryFileId.startsWith('file-service://')) {
++    libraryFileId = pointerToFileId(libraryFileId);
++  }
++  if (!fileId && pointer && pointer.startsWith('file-service://')) {
++    fileId = pointerToFileId(pointer);
++  }
++
+   // Route C: ChatGPT backend files API & Fallbacks
+   const tryFilesApiDownload = async (
+     targetId: string,
+diff --git a/src/fileSystem.ts b/src/fileSystem.ts
+index aade3ff..4729db4 100644
+--- a/src/fileSystem.ts
++++ b/src/fileSystem.ts
+@@ -75,18 +75,53 @@ export async function verifyPermission(handle: FileSystemDirectoryHandle, readWr
+     return false;
+ }
+ 
++function isTransientFsError(e: any): boolean {
++    if (!e) return false;
++    const msg = e.message || String(e);
++    return (
++        msg.includes('cached state') ||
++        msg.includes('state has changed') ||
++        e.name === 'InvalidStateError' ||
++        e.name === 'NoModificationAllowedError'
++    );
++}
++
+ export async function ensureFolder(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemDirectoryHandle> {
++    for (let attempt = 0; attempt < 2; attempt++) {
++        try {
++            // @ts-ignore
++            return await parent.getDirectoryHandle(name, { create: true });
++        } catch (e: any) {
++            if (attempt === 0 && isTransientFsError(e)) {
++                await new Promise(r => setTimeout(r, 150));
++                continue;
++            }
++            throw e;
++        }
++    }
+     // @ts-ignore
+     return await parent.getDirectoryHandle(name, { create: true });
+ }
+ 
+ export async function writeFile(parent: FileSystemDirectoryHandle, name: string, content: string | Blob | BufferSource) {
+-    // @ts-ignore
+-    const fileHandle = await parent.getFileHandle(name, { create: true });
+-    // @ts-ignore
+-    const writable = await fileHandle.createWritable();
+-    await writable.write(content);
+-    await writable.close();
++    for (let attempt = 0; attempt < 2; attempt++) {
++        try {
++            // @ts-ignore
++            const fileHandle = await parent.getFileHandle(name, { create: true });
++            // @ts-ignore
++            const writable = await fileHandle.createWritable();
++            await writable.write(content);
++            await writable.close();
++            return;
++        } catch (e: any) {
++            if (attempt === 0 && isTransientFsError(e)) {
++                console.warn(`[fileSystem] writeFile "${name}" narazil na přechodnou chybu stavu handle (${e.message}). Opakuji za 150ms...`);
++                await new Promise(r => setTimeout(r, 150));
++                continue;
++            }
++            throw e;
++        }
++    }
+ }
+ 
+ export async function fileExists(parent: FileSystemDirectoryHandle, name: string): Promise<boolean> {
+@@ -100,6 +135,21 @@ export async function fileExists(parent: FileSystemDirectoryHandle, name: string
+ }
+ 
+ export async function readFile(parent: FileSystemDirectoryHandle, name: string): Promise<string> {
++    for (let attempt = 0; attempt < 2; attempt++) {
++        try {
++            // @ts-ignore
++            const fileHandle = await parent.getFileHandle(name);
++            // @ts-ignore
++            const file = await fileHandle.getFile();
++            return await file.text();
++        } catch (e: any) {
++            if (attempt === 0 && isTransientFsError(e)) {
++                await new Promise(r => setTimeout(r, 150));
++                continue;
++            }
++            throw e;
++        }
++    }
+     // @ts-ignore
+     const fileHandle = await parent.getFileHandle(name);
+     // @ts-ignore
+diff --git a/src/files.ts b/src/files.ts
+index 32a50f3..2065ef5 100644
+--- a/src/files.ts
++++ b/src/files.ts
+@@ -32,10 +32,14 @@ export function collectFileCandidates(conv: Conversation): FileCandidate[] {
+         sedimentId = resolveSedimentPointer(rawUrl);
+       }
+ 
++      const cleanAttId = (att.id && typeof att.id === 'string') ? pointerToFileId(att.id) : att.id;
++      const cleanFileId = (att.file_id && typeof att.file_id === 'string') ? pointerToFileId(att.file_id) : att.file_id;
++      const cleanLibId = (att.library_file_id && typeof att.library_file_id === 'string') ? pointerToFileId(att.library_file_id) : att.library_file_id;
++
+       // Prefer file_ id starting with file- or file_, or library_file_id, or att.id, or sedimentId
+-      const primaryId = (att.id && (att.id.startsWith('file-') || att.id.startsWith('file_')))
+-        ? att.id
+-        : (att.library_file_id || att.file_id || sedimentId || att.id);
++      const primaryId = (cleanAttId && (cleanAttId.startsWith('file-') || cleanAttId.startsWith('file_')))
++        ? cleanAttId
++        : (cleanLibId || cleanFileId || sedimentId || cleanAttId);
+       if (!primaryId) return;
+ 
+       add(primaryId, {
+@@ -43,7 +47,7 @@ export function collectFileCandidates(conv: Conversation): FileCandidate[] {
+         candidate_type: 'attachment',
+         meta: att,
+         message_id: msg.id,
+-        library_file_id: att.library_file_id || null,
++        library_file_id: cleanLibId || null,
+         name: att.name || att.file_name,
+         mime_type: att.mime_type || att.mime,
+         size_bytes: att.size || att.size_bytes,
+@@ -55,7 +59,7 @@ export function collectFileCandidates(conv: Conversation): FileCandidate[] {
+     Object.values(crefByFile)
+       .flat()
+       .forEach((ref) => {
+-        if (ref?.file_id) add(ref.file_id, { source: 'cref', candidate_type: 'cref', meta: ref, message_id: msg.id });
++        if (ref?.file_id) add(pointerToFileId(ref.file_id), { source: 'cref', candidate_type: 'cref', meta: ref, message_id: msg.id });
+         if (ref?.asset_pointer) {
+           const fid = pointerToFileId(ref.asset_pointer);
+           add(fid, { source: 'cref-pointer', candidate_type: 'cref-pointer', pointer: ref.asset_pointer, meta: ref, message_id: msg.id });
+@@ -65,7 +69,7 @@ export function collectFileCandidates(conv: Conversation): FileCandidate[] {
+     const n7 = meta.n7jupd_crefs_by_file || meta.n7jupd_crefs || {};
+     const n7list = Array.isArray(n7) ? n7 : Object.values(n7).flat();
+     n7list.forEach((ref) => {
+-      if (ref?.file_id) add(ref.file_id, { source: 'n7jupd-cref', candidate_type: 'n7jupd-cref', meta: ref, message_id: msg.id });
++      if (ref?.file_id) add(pointerToFileId(ref.file_id), { source: 'n7jupd-cref', candidate_type: 'n7jupd-cref', meta: ref, message_id: msg.id });
+     });
+ 
+     if (Array.isArray(c.parts)) {
+diff --git a/src/utils.ts b/src/utils.ts
+index 9d01ba4..9cd2cb6 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -2,7 +2,22 @@ import { GM_download, GM_xmlhttpRequest } from 'vite-plugin-monkey/dist/client';
+ 
+ 
+ 
+-export const sanitize = (s: string): string => (s || '').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80);
++const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
++
++export const sanitize = (s: string): string => {
++  if (!s || typeof s !== 'string') return 'untitled';
++  // 1. Remove control characters and illegal filesystem characters
++  let cleaned = s.replace(/[\x00-\x1f\x7f\\/:*?"<>|]+/g, '_').trim();
++  // 2. Strip trailing dots and spaces (strictly prohibited on Windows / File System Access API)
++  cleaned = cleaned.replace(/[. ]+$/, '');
++  // 3. Fallback if string is empty
++  if (!cleaned) cleaned = 'untitled';
++  // 4. Prefix DOS reserved device names (con, prn, aux, nul, com1-9, lpt1-9)
++  if (WINDOWS_RESERVED_NAMES.test(cleaned)) {
++    cleaned = `_${cleaned}`;
++  }
++  return cleaned.slice(0, 80);
++};
+ 
+ export const isInlinePointer = (p: string): boolean => {
+   if (!p) return false;
+@@ -60,7 +75,12 @@ export const pointerToFileId = (p: string): string => {
+     if (resolved) return resolved;
+     return p.replace(/^sediment:\/\//, '');
+   }
+-  const m = p.match(/file[-_][0-9a-f]+/i);
++  if (p.startsWith('file-service://')) {
++    const withoutScheme = p.replace(/^file-service:\/\//, '').trim();
++    const m = withoutScheme.match(/file[-_][0-9a-zA-Z_-]+/i);
++    return m ? m[0] : withoutScheme;
++  }
++  const m = p.match(/file[-_][0-9a-zA-Z_-]+/i);
+   return m ? m[0] : p;
+ };
+ 
+@@ -176,8 +196,8 @@ const HAS_EXT_RE = /\.[^./\\]+$/;
+ export function inferFilename(name: string, fallbackId: string, mime: string): string {
+   const base = sanitize(name || '') || sanitize(fallbackId || '') || 'untitled';
+   const ext = fileExtFromMime(mime || '');
+-  if (!ext || HAS_EXT_RE.test(base)) return base;
+-  return `${base}${ext}`;
++  if (!ext || HAS_EXT_RE.test(base)) return sanitize(base);
++  return sanitize(`${base}${ext}`);
+ }
+ 
+ 

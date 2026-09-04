@@ -1,5 +1,5 @@
 import { Cred } from './cred';
-import { projectId, sanitize, gmDownload, gmFetchBlob, inferFilename, fetchWithRetry } from './utils';
+import { projectId, sanitize, gmDownload, gmFetchBlob, inferFilename, fetchWithRetry, sleep } from './utils';
 import { Conversation, UserProfile } from './types';
 import { Logger } from './logger';
 
@@ -62,20 +62,48 @@ export async function downloadSandboxFile({
     sandbox_path: sandboxPath.replace(/^sandbox:/, ''),
   });
   const url = `${location.origin}/backend-api/conversation/${conversationId}/interpreter/download?${params.toString()}`;
-  const resp = await fetchWithRetry(url, { headers, credentials: 'include' });
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => '');
-    throw new Error(`sandbox download meta ${resp.status}: ${txt.slice(0, 200)}`);
+
+  const maxRetries = 4;
+  let dl: string | null = null;
+  let lastJson: any = null;
+  let attemptsUsed = 0;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    attemptsUsed = attempt + 1;
+    const resp = await fetchWithRetry(url, { headers, credentials: 'include' });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '');
+      throw new Error(`sandbox download meta ${resp.status}: ${txt.slice(0, 200)}`);
+    }
+    let j: any;
+    try {
+      j = await resp.json();
+    } catch (e) {
+      throw new Error('Metadata sandbox download nejsou JSON');
+    }
+    lastJson = j;
+    if (j.download_url) {
+      dl = j.download_url;
+      break;
+    }
+    if (j.status === 'retry') {
+      if (attempt < maxRetries) {
+        const waitMs = 1000 * (attempt + 1);
+        Logger.warn('API', `Sandbox vrátil {"status":"retry"} (pokus ${attemptsUsed}/${maxRetries + 1}). Čekám ${waitMs}ms před opakováním...`);
+        await sleep(waitMs);
+        continue;
+      }
+    }
   }
-  let j: any;
-  try {
-    j = await resp.json();
-  } catch (e) {
-    throw new Error('Metadata sandbox download nejsou JSON');
+
+  if (!dl) {
+    if (lastJson?.status === 'retry') {
+      throw new Error(`sandbox download retry vyčerpán (pokusů: ${attemptsUsed}): status="retry" (Sandbox stále připravuje soubor)`);
+    }
+    throw new Error(`Sandbox download_url chybí (pokusů: ${attemptsUsed}): ${JSON.stringify(lastJson).slice(0, 200)}`);
   }
-  const dl = j.download_url;
-  if (!dl) throw new Error(`Sandbox download_url chybí: ${JSON.stringify(j).slice(0, 200)}`);
-  const fname = sanitize(j.file_name || sandboxPath.split('/').pop() || 'sandbox_file');
+
+  const fname = sanitize(lastJson.file_name || sandboxPath.split('/').pop() || 'sandbox_file');
   await gmDownload(dl, fname);
 }
 
@@ -101,26 +129,54 @@ export async function downloadSandboxFileBlob({
     sandbox_path: sandboxPath.replace(/^sandbox:/, ''),
   });
   const url = `${location.origin}/backend-api/conversation/${conversationId}/interpreter/download?${params.toString()}`;
-  const resp = await fetchWithRetry(url, { headers, credentials: 'include' });
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => '');
-    if (txt.includes('ace_pod_expired')) {
-      throw new Error(`sandbox download meta 410: ace_pod_expired (Sandbox kontejner vypršel)`);
+
+  const maxRetries = 4;
+  let dl: string | null = null;
+  let lastJson: any = null;
+  let attemptsUsed = 0;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    attemptsUsed = attempt + 1;
+    const resp = await fetchWithRetry(url, { headers, credentials: 'include' });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '');
+      if (txt.includes('ace_pod_expired')) {
+        throw new Error(`sandbox download meta 410: ace_pod_expired (Sandbox kontejner vypršel)`);
+      }
+      throw new Error(`sandbox download meta ${resp.status}: ${txt.slice(0, 200)}`);
     }
-    throw new Error(`sandbox download meta ${resp.status}: ${txt.slice(0, 200)}`);
+    let j: any;
+    try {
+      j = await resp.json();
+    } catch (e) {
+      throw new Error('Metadata sandbox download nejsou JSON');
+    }
+    lastJson = j;
+    if (j.download_url) {
+      dl = j.download_url;
+      break;
+    }
+    if (j.status === 'retry') {
+      if (attempt < maxRetries) {
+        const waitMs = 1000 * (attempt + 1);
+        Logger.warn('API', `Sandbox vrátil {"status":"retry"} (pokus ${attemptsUsed}/${maxRetries + 1}). Čekám ${waitMs}ms před opakováním...`);
+        await sleep(waitMs);
+        continue;
+      }
+    }
   }
-  let j: any;
-  try {
-    j = await resp.json();
-  } catch (e) {
-    throw new Error('Metadata sandbox download nejsou JSON');
+
+  if (!dl) {
+    if (lastJson?.status === 'retry') {
+      throw new Error(`sandbox download retry vyčerpán (pokusů: ${attemptsUsed}): status="retry" (Sandbox stále připravuje soubor)`);
+    }
+    throw new Error(`Sandbox download_url chybí (pokusů: ${attemptsUsed}): ${JSON.stringify(lastJson).slice(0, 200)}`);
   }
-  const dl = j.download_url;
-  if (!dl) throw new Error(`Sandbox download_url chybí: ${JSON.stringify(j).slice(0, 200)}`);
+
   const gmHeaders = {};
   const res = await gmFetchBlob(dl, gmHeaders);
   const fname = inferFilename(
-    j.file_name || sandboxPath.split('/').pop() || 'sandbox_file',
+    lastJson.file_name || sandboxPath.split('/').pop() || 'sandbox_file',
     sandboxPath,
     res.mime || ''
   );

@@ -16,6 +16,18 @@ if (typeof globalThis.XMLHttpRequest === 'undefined') {
 }
 
 export const unsafeWindow = globalThis.window;
-export const GM_download = () => {};
-export const GM_xmlhttpRequest = () => {};
+export const GM_download = (opts) => {
+  if (opts && opts.onload) setTimeout(opts.onload, 10);
+};
+export const GM_xmlhttpRequest = (opts) => {
+  if (opts && opts.onload) {
+    setTimeout(() => {
+      opts.onload({
+        response: new Uint8Array([1, 2, 3, 4]).buffer,
+        responseText: 'mock-bytes',
+        responseHeaders: 'content-type: text/plain\r\n',
+      });
+    }, 10);
+  }
+};
 export const GM_cookie = { list: async () => [] };

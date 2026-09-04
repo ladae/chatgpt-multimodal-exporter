@@ -1,6 +1,6 @@
 import { FileCandidate, AssetLedgerEntry } from './types';
 import { fileExists, writeFile } from './fileSystem';
-import { sanitize, isInlinePointer, inferFilename, gmFetchBlob, normalizeSandboxPointer, resolveSedimentPointer } from './utils';
+import { sanitize, isInlinePointer, inferFilename, gmFetchBlob, normalizeSandboxPointer, resolveSedimentPointer, pointerToFileId } from './utils';
 import { Cred } from './cred';
 import { downloadSandboxFileBlob, fetchDownloadUrlOrResponse, fetchFileMeta } from './api';
 import { Logger } from './logger';
@@ -45,7 +45,7 @@ export async function downloadCandidateWithLedger(
   const messageId = candidate.message_id || null;
   const candidateType = candidate.candidate_type || candidate.source || 'unknown';
   let fileId = candidate.file_id || null;
-  const libraryFileId = candidate.library_file_id || null;
+  let libraryFileId = candidate.library_file_id || null;
   const pointer = candidate.pointer || null;
   const originalRef = pointer || fileId || libraryFileId || candidate.download_url || null;
 
@@ -232,6 +232,17 @@ export async function downloadCandidateWithLedger(
     if (resolved) {
       fileId = resolved;
     }
+  }
+
+  // Resolve file-service:// if present in fileId, libraryFileId or pointer
+  if (fileId && fileId.startsWith('file-service://')) {
+    fileId = pointerToFileId(fileId);
+  }
+  if (libraryFileId && libraryFileId.startsWith('file-service://')) {
+    libraryFileId = pointerToFileId(libraryFileId);
+  }
+  if (!fileId && pointer && pointer.startsWith('file-service://')) {
+    fileId = pointerToFileId(pointer);
   }
 
   // Route C: ChatGPT backend files API & Fallbacks

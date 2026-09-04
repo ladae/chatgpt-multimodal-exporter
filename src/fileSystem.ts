@@ -75,18 +75,53 @@ export async function verifyPermission(handle: FileSystemDirectoryHandle, readWr
     return false;
 }
 
+function isTransientFsError(e: any): boolean {
+    if (!e) return false;
+    const msg = e.message || String(e);
+    return (
+        msg.includes('cached state') ||
+        msg.includes('state has changed') ||
+        e.name === 'InvalidStateError' ||
+        e.name === 'NoModificationAllowedError'
+    );
+}
+
 export async function ensureFolder(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemDirectoryHandle> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            // @ts-ignore
+            return await parent.getDirectoryHandle(name, { create: true });
+        } catch (e: any) {
+            if (attempt === 0 && isTransientFsError(e)) {
+                await new Promise(r => setTimeout(r, 150));
+                continue;
+            }
+            throw e;
+        }
+    }
     // @ts-ignore
     return await parent.getDirectoryHandle(name, { create: true });
 }
 
 export async function writeFile(parent: FileSystemDirectoryHandle, name: string, content: string | Blob | BufferSource) {
-    // @ts-ignore
-    const fileHandle = await parent.getFileHandle(name, { create: true });
-    // @ts-ignore
-    const writable = await fileHandle.createWritable();
-    await writable.write(content);
-    await writable.close();
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            // @ts-ignore
+            const fileHandle = await parent.getFileHandle(name, { create: true });
+            // @ts-ignore
+            const writable = await fileHandle.createWritable();
+            await writable.write(content);
+            await writable.close();
+            return;
+        } catch (e: any) {
+            if (attempt === 0 && isTransientFsError(e)) {
+                console.warn(`[fileSystem] writeFile "${name}" narazil na přechodnou chybu stavu handle (${e.message}). Opakuji za 150ms...`);
+                await new Promise(r => setTimeout(r, 150));
+                continue;
+            }
+            throw e;
+        }
+    }
 }
 
 export async function fileExists(parent: FileSystemDirectoryHandle, name: string): Promise<boolean> {
@@ -100,6 +135,21 @@ export async function fileExists(parent: FileSystemDirectoryHandle, name: string
 }
 
 export async function readFile(parent: FileSystemDirectoryHandle, name: string): Promise<string> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            // @ts-ignore
+            const fileHandle = await parent.getFileHandle(name);
+            // @ts-ignore
+            const file = await fileHandle.getFile();
+            return await file.text();
+        } catch (e: any) {
+            if (attempt === 0 && isTransientFsError(e)) {
+                await new Promise(r => setTimeout(r, 150));
+                continue;
+            }
+            throw e;
+        }
+    }
     // @ts-ignore
     const fileHandle = await parent.getFileHandle(name);
     // @ts-ignore
