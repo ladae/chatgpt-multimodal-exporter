@@ -1,7 +1,7 @@
 import { fetchConvWithRetry } from './conversations';
 import { Cred } from './cred';
 import { loadState, updateConversationState, updateWorkspaceCheckTime, updateGizmoCheckTime, saveState } from './autoSaveState';
-import { getRootHandle, verifyPermission, ensureFolder, writeFile } from './fileSystem';
+import { getRootHandle, verifyPermission, ensureFolder, writeFile, readFile, fileExists } from './fileSystem';
 import { collectFileCandidates } from './files';
 import { Conversation, ConversationMetadata, AssetLedgerEntry } from './types';
 import { Logger } from './logger';
@@ -11,6 +11,7 @@ import { generateHTML } from './htmlGenerator';
 import { buildConversationInventory } from './inventory';
 import { downloadCandidateWithLedger } from './assetLedger';
 import { buildScanReport, saveScanReport } from './validation';
+import { globalRateLimiter } from './utils';
 
 // Re-export file system helpers for UI
 export { pickAndSaveRootHandle, getRootHandle } from './fileSystem';
@@ -261,6 +262,51 @@ export async function runAutoSaveCycle(forceFullScan = false) {
                     : (currentWorkspaceId && currentWorkspaceId !== 'personal' && currentWorkspaceId !== 'x' ? currentWorkspaceId : 'Personal');
 
                 const typeStr = c.projectId ? `[Gizmo ${c.projectId}]` : `[${wsFolderName}]`;
+
+                // Resumption check: If conversation is already up to date in state and complete on disk, skip network fetch
+                const local = state.conversations[c.id];
+                const remoteTime = c.update_time ? new Date(c.update_time).getTime() : 0;
+                const isUpToDate = !!(local && remoteTime <= local.update_time);
+
+                if (isUpToDate) {
+                    let alreadySavedOnDisk = false;
+                    let diskMeta: any = null;
+                    try {
+                        const wsFolder = await ensureFolder(userFolder, wsFolderName);
+                        const catFolder = await ensureFolder(wsFolder, category);
+                        const folderName = await resolveConversationFolderName(catFolder, c.id);
+                        if (folderName) {
+                            const convFolder = await ensureFolder(catFolder, folderName);
+                            if (await fileExists(convFolder, 'metadata.json')) {
+                                const metaStr = await readFile(convFolder, 'metadata.json');
+                                diskMeta = JSON.parse(metaStr);
+                                if (!diskMeta.failed_attachments || diskMeta.failed_attachments.length === 0) {
+                                    alreadySavedOnDisk = true;
+                                }
+                            }
+                        }
+                    } catch {
+                        alreadySavedOnDisk = false;
+                    }
+
+                    if (alreadySavedOnDisk) {
+                        Logger.info('AutoSave', `Conversation ${c.id} is already up to date on disk. Skipping network download.`);
+                        saved_conversation_ids.push(c.id);
+                        chatDetails.push({
+                            conversation_id: c.id,
+                            title: (diskMeta && diskMeta.title) || c.title,
+                            scope: c.scopes,
+                            status: 'saved',
+                            asset_count: diskMeta?.attachments?.length || 0,
+                            failed_assets: 0,
+                        });
+                        continue;
+                    }
+                }
+
+                // Apply adaptive pacing before network requests
+                await globalRateLimiter.pace();
+
                 autoSaveStore.setStatus('saving', `Ukládání ${i + 1}/${candidates.length}: ${typeStr} ${c.id}`);
                 Logger.info('AutoSave', `Saving ${c.id} to ${wsFolderName}/${category}`);
 

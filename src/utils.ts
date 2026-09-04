@@ -181,27 +181,123 @@ export function inferFilename(name: string, fallbackId: string, mime: string): s
 }
 
 
+export function parseRetryAfter(header: string | null | undefined): number | null {
+  if (!header) return null;
+  const trimmed = header.trim();
+  const seconds = Number(trimmed);
+  if (!isNaN(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+  const dateMs = Date.parse(trimmed);
+  if (!isNaN(dateMs)) {
+    const diff = dateMs - Date.now();
+    return diff > 0 ? diff : 0;
+  }
+  return null;
+}
+
+export class AdaptiveRateLimiter {
+  private minDelayMs: number;
+  private maxDelayMs: number;
+  private currentDelayMs: number;
+  private consecutiveSuccesses: number = 0;
+
+  constructor(minDelayMs = 350, maxDelayMs = 5000) {
+    this.minDelayMs = minDelayMs;
+    this.maxDelayMs = maxDelayMs;
+    this.currentDelayMs = minDelayMs;
+  }
+
+  recordSuccess(): void {
+    this.consecutiveSuccesses++;
+    if (this.consecutiveSuccesses >= 3 && this.currentDelayMs > this.minDelayMs) {
+      this.currentDelayMs = Math.max(this.minDelayMs, this.currentDelayMs - 250);
+      this.consecutiveSuccesses = 0;
+    }
+  }
+
+  recordRateLimit(suggestedWaitMs?: number): void {
+    this.consecutiveSuccesses = 0;
+    const bump = suggestedWaitMs ? Math.min(this.maxDelayMs, suggestedWaitMs) : 2500;
+    this.currentDelayMs = Math.min(this.maxDelayMs, Math.max(this.currentDelayMs * 2, bump));
+  }
+
+  async pace(): Promise<void> {
+    if (this.currentDelayMs > 0) {
+      await sleep(this.currentDelayMs);
+    }
+  }
+
+  getCurrentDelay(): number {
+    return this.currentDelayMs;
+  }
+
+  reset(): void {
+    this.currentDelayMs = this.minDelayMs;
+    this.consecutiveSuccesses = 0;
+  }
+}
+
+export const globalRateLimiter = new AdaptiveRateLimiter();
+
 export async function fetchWithRetry(
   url: string,
   options: RequestInit = {},
-  retries: number = 3,
+  retries: number = 4,
   backoff: number = 1000
 ): Promise<Response> {
   let lastError: any;
   for (let i = 0; i <= retries; i++) {
     try {
       const res = await fetch(url, options);
-      if (res.ok || res.status < 500) {
+
+      if (res.ok) {
+        globalRateLimiter.recordSuccess();
         return res;
       }
-      // If 5xx, throw to trigger retry
-      throw new Error(`HTTP ${res.status}`);
+
+      // 429 Too Many Requests: Exponential backoff + Jitter, respect Retry-After
+      if (res.status === 429) {
+        let delayMs = parseRetryAfter(res.headers.get('Retry-After'));
+        if (delayMs === null || delayMs <= 0) {
+          const base = Math.max(2000, backoff) * Math.pow(2, i);
+          const jitter = Math.floor(Math.random() * 1000);
+          delayMs = Math.min(60000, base + jitter);
+        } else {
+          delayMs += Math.floor(Math.random() * 500);
+        }
+
+        globalRateLimiter.recordRateLimit(delayMs);
+
+        if (i < retries) {
+          console.warn(`[fetchWithRetry] HTTP 429 received for ${url}. Waiting ${delayMs}ms before retry ${i + 1}/${retries}...`);
+          await sleep(delayMs);
+          continue;
+        }
+        return res;
+      }
+
+      // 5xx Server Errors: Exponential backoff
+      if (res.status >= 500) {
+        if (i < retries) {
+          const delayMs = backoff * Math.pow(2, i) + Math.floor(Math.random() * 500);
+          console.warn(`[fetchWithRetry] HTTP ${res.status} received for ${url}. Waiting ${delayMs}ms before retry ${i + 1}/${retries}...`);
+          await sleep(delayMs);
+          continue;
+        }
+        return res;
+      }
+
+      // Other 4xx responses (401, 403, 404, etc.): return immediately for caller handling
+      return res;
     } catch (e) {
       lastError = e;
       if (i < retries) {
-        await sleep(backoff * Math.pow(2, i));
+        const delayMs = backoff * Math.pow(2, i) + Math.floor(Math.random() * 500);
+        await sleep(delayMs);
       }
     }
   }
   throw lastError;
 }
+

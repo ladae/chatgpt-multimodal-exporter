@@ -234,18 +234,23 @@ export async function scanPagination(
 export async function fetchConvWithRetry(
   id: string,
   projectId?: string | null,
-  retries = 2
+  retries = 3
 ): Promise<Conversation> {
   let attempt = 0;
   let lastErr: any = null;
   while (attempt <= retries) {
     try {
       return await fetchConversation(id, projectId || undefined);
-    } catch (e) {
+    } catch (e: any) {
       lastErr = e;
       attempt++;
-      const delay = 400 * Math.pow(2, attempt - 1);
-      await sleep(delay);
+      if (attempt <= retries) {
+        const is429 = e?.message && e.message.includes('429');
+        const baseDelay = is429 ? 2500 : 500;
+        const delay = baseDelay * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 500);
+        console.warn(`[fetchConvWithRetry] Opakovaný pokus ${attempt}/${retries} pro konverzaci ${id} po ${delay}ms: ${e?.message}`);
+        await sleep(delay);
+      }
     }
   }
   throw lastErr || new Error('fetch_failed');

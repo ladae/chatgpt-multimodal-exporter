@@ -74,7 +74,7 @@ export async function downloadPointerOrFile(fileInfo: FileCandidate): Promise<vo
 
   for (const cid of candidateIds) {
     try {
-      const downloadResult = await fetchDownloadUrlOrResponse(cid, headers, fileInfo.gizmo_id);
+      const downloadResult = await fetchDownloadUrlOrResponse(cid, headers, fileInfo.gizmo_id, fileInfo.conversation_id);
       if (downloadResult instanceof Response) {
         resp = downloadResult;
         break;
@@ -200,7 +200,7 @@ export async function downloadPointerOrFileAsBlob(
 
   for (const cid of candidateIds) {
     try {
-      const downloadResult = await fetchDownloadUrlOrResponse(cid, headers, fileInfo.gizmo_id);
+      const downloadResult = await fetchDownloadUrlOrResponse(cid, headers, fileInfo.gizmo_id, fileInfo.conversation_id);
       if (downloadResult instanceof Response) {
         resp = downloadResult;
         break;

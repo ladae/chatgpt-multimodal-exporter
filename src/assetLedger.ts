@@ -237,7 +237,8 @@ export async function downloadCandidateWithLedger(
   // Route C: ChatGPT backend files API & Fallbacks
   const tryFilesApiDownload = async (
     targetId: string,
-    gizmoId?: string | null
+    gizmoId?: string | null,
+    conversationId?: string | null
   ): Promise<{ blob: Blob; mime: string; filename: string }> => {
     if (!Cred.token) {
       const ok = await Cred.ensureViaSession();
@@ -250,9 +251,9 @@ export async function downloadCandidateWithLedger(
 
     let lastErr: any = null;
 
-    // 1. Try download endpoint
+    // 1. Try download endpoint with conversation_id & gizmoId
     try {
-      const downloadResult = await fetchDownloadUrlOrResponse(targetId, headers, gizmoId);
+      const downloadResult = await fetchDownloadUrlOrResponse(targetId, headers, gizmoId, conversationId);
       if (downloadResult instanceof Response) {
         if (!downloadResult.ok) {
           const txt = await downloadResult.text().catch(() => '');
@@ -276,9 +277,9 @@ export async function downloadCandidateWithLedger(
       Logger.debug('AssetLedger', `Download endpoint selhal pro ${targetId}: ${e.message}, zkouším meta endpoint...`);
     }
 
-    // 2. Try file meta endpoint as fallback
+    // 2. Try file meta endpoint as fallback (passing conversationId)
     try {
-      const meta = await fetchFileMeta(targetId, headers);
+      const meta = await fetchFileMeta(targetId, headers, conversationId);
       const dlUrl = meta?.download_url || meta?.url;
       if (dlUrl && typeof dlUrl === 'string' && (dlUrl.startsWith('http://') || dlUrl.startsWith('https://'))) {
         const res = await gmFetchBlob(dlUrl);
@@ -297,18 +298,31 @@ export async function downloadCandidateWithLedger(
   // Step 1: primary_file_id
   if (fileId) {
     try {
-      const res = await tryFilesApiDownload(fileId, candidate.gizmo_id);
+      const res = await tryFilesApiDownload(fileId, candidate.gizmo_id, convId);
       return await recordSuccess(res.blob, res.mime, res.filename, 'primary_file_id', fileId);
     } catch (err: any) {
       recordFailure('primary_file_id', err, fileId);
     }
   }
 
-  // Step 2: library_file_id_fallback
-  if (libraryFileId && libraryFileId !== fileId) {
+  // Step 1b: If candidate.meta contains alternative file id (e.g. meta.file_id or meta.id) that differs from fileId
+  const altFileId = (candidate.meta?.file_id && candidate.meta.file_id !== fileId)
+    ? candidate.meta.file_id
+    : (candidate.meta?.id && candidate.meta.id !== fileId && (candidate.meta.id.startsWith('file-') || candidate.meta.id.startsWith('file_')) ? candidate.meta.id : null);
+  if (altFileId) {
     try {
-      // Library files are user assets, do not pass gizmo_id to avoid 403 Forbidden
-      const res = await tryFilesApiDownload(libraryFileId, null);
+      const res = await tryFilesApiDownload(altFileId, candidate.gizmo_id, convId);
+      return await recordSuccess(res.blob, res.mime, res.filename, 'alt_file_id', altFileId);
+    } catch (err: any) {
+      recordFailure('alt_file_id', err, altFileId);
+    }
+  }
+
+  // Step 2: library_file_id_fallback
+  if (libraryFileId && libraryFileId !== fileId && libraryFileId !== altFileId) {
+    try {
+      // Pass convId to authorize library file download within this conversation!
+      const res = await tryFilesApiDownload(libraryFileId, null, convId);
       return await recordSuccess(res.blob, res.mime, res.filename, 'library_file_id_fallback', libraryFileId);
     } catch (err: any) {
       recordFailure('library_file_id_fallback', err, libraryFileId);

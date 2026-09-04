@@ -127,9 +127,12 @@ export async function downloadSandboxFileBlob({
   return { blob: res.blob, mime: res.mime || '', filename: fname };
 }
 
-export async function fetchFileMeta(fileId: string, headers: Headers): Promise<any> {
-  const url = `${location.origin}/backend-api/files/${fileId}`;
-  const resp = await fetchWithRetry(url, { method: 'GET', headers, credentials: 'include' });
+export async function fetchFileMeta(fileId: string, headers: Headers, conversationId?: string | null): Promise<any> {
+  const u = new URL(`${location.origin}/backend-api/files/${fileId}`);
+  if (conversationId) {
+    u.searchParams.set('conversation_id', conversationId);
+  }
+  const resp = await fetchWithRetry(u.toString(), { method: 'GET', headers, credentials: 'include' });
   if (!resp.ok) throw new Error(`meta ${resp.status}`);
   return resp.json();
 }
@@ -137,11 +140,15 @@ export async function fetchFileMeta(fileId: string, headers: Headers): Promise<a
 export async function fetchDownloadUrlOrResponse(
   fileId: string,
   headers: Headers,
-  gizmoId?: string | null
+  gizmoId?: string | null,
+  conversationId?: string | null
 ): Promise<string | Response | null> {
-  const makeUrl = (gid?: string | null) => {
+  const makeUrl = (gid?: string | null, cid?: string | null) => {
     const u = new URL(`${location.origin}/backend-api/files/download/${fileId}`);
     u.searchParams.set('inline', 'false');
+    if (cid) {
+      u.searchParams.set('conversation_id', cid);
+    }
     // Only append gizmo_id for Gizmo-owned files (starting with 'file-')
     // User-uploaded files (starting with 'file_') fail if gizmo_id is present
     if (gid && fileId.startsWith('file-')) {
@@ -150,13 +157,32 @@ export async function fetchDownloadUrlOrResponse(
     return u.toString();
   };
 
-  let resp = await fetchWithRetry(makeUrl(gizmoId), { method: 'GET', headers, credentials: 'include' });
+  let resp = await fetchWithRetry(makeUrl(gizmoId, conversationId), { method: 'GET', headers, credentials: 'include' });
 
-  // If 403 Forbidden and gizmoId was passed, retry immediately without gizmoId!
+  // Stage 1 Fallback: If 403 Forbidden and gizmoId was passed, retry immediately without gizmoId (retaining conversationId)!
   // User library attachments in GPT conversations return 403 if gizmo_id is attached.
   if (resp.status === 403 && gizmoId) {
     Logger.debug('API', `Download ${fileId} with gizmo_id returned 403, retrying without gizmo_id...`);
-    const retryResp = await fetchWithRetry(makeUrl(null), { method: 'GET', headers, credentials: 'include' });
+    const retryResp = await fetchWithRetry(makeUrl(null, conversationId), { method: 'GET', headers, credentials: 'include' });
+    if (retryResp.ok || retryResp.status < 400) {
+      resp = retryResp;
+    }
+  }
+
+  // Stage 2 Fallback: If still 403 and conversationId was passed, retry without conversationId (for global user files)!
+  if (resp.status === 403 && conversationId) {
+    Logger.debug('API', `Download ${fileId} with conversation_id returned 403, retrying without conversation_id...`);
+    const retryResp = await fetchWithRetry(makeUrl(null, null), { method: 'GET', headers, credentials: 'include' });
+    if (retryResp.ok || retryResp.status < 400) {
+      resp = retryResp;
+    }
+  }
+
+  // Stage 3 Fallback: If 403 and conversationId was NOT passed initially, retry with conversationId if available from Cred
+  if (resp.status === 403 && !conversationId && (Cred as any).currentConvId) {
+    const fallbackCid = (Cred as any).currentConvId;
+    Logger.debug('API', `Download ${fileId} without conversation_id returned 403, retrying with conversation_id ${fallbackCid}...`);
+    const retryResp = await fetchWithRetry(makeUrl(null, fallbackCid), { method: 'GET', headers, credentials: 'include' });
     if (retryResp.ok || retryResp.status < 400) {
       resp = retryResp;
     }
