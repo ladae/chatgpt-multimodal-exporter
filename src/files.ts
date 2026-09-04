@@ -135,6 +135,6 @@ export function extractImages(conv: Conversation): FileCandidate[] {
     }
   }
 
-  console.log('[ChatGPT-Multimodal-Exporter] 找到的图片信息：', images);
+  console.log('[ChatGPT-Multimodal-Exporter] Nalezené informace o obrázcích: ', images);
   return images;
 }

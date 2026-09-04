@@ -310,11 +310,11 @@ export const Cred = (() => {
   };
 
   const debugText = (): string => {
-    const tok = token ? `${mask(token)} (${tokenSource})` : '未获取';
-    const acc = accountId ? `${accountId} (${accountIdSource})` : '未获取';
-    const usr = mainUser ? `${mainUser}` : '未获取';
-    const err = lastErr ? `\n错误：${lastErr}` : '';
-    return `Token：${tok}\nAccount：${acc}\nUser: ${usr}${err}`;
+    const tok = token ? `${mask(token)} (${tokenSource})` : 'Nezískáno';
+    const acc = accountId ? `${accountId} (${accountIdSource})` : 'Nezískáno';
+    const usr = mainUser ? `${mainUser}` : 'Nezískáno';
+    const err = lastErr ? `\nChyba: ${lastErr}` : '';
+    return `Token: ${tok}\nÚčet: ${acc}\nUser: ${usr}${err}`;
   };
 
   initInterceptors();

@@ -37,7 +37,7 @@ function findOpenSidebarButton(): HTMLElement | null {
   const btns = Array.from(document.querySelectorAll('button'));
   const found = btns.find((b) => {
     const label = `${b.getAttribute('aria-label') || ''} ${b.getAttribute('title') || ''}`.toLowerCase();
-    return (label.includes('open sidebar') || label.includes('打开边栏')) && isVisible(b);
+    return (label.includes('open sidebar') || label.includes('otevřít postranní panel')) && isVisible(b);
   });
   return (found as HTMLElement) || null;
 }

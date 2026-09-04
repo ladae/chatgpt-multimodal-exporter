@@ -20,7 +20,7 @@ export function renderHtmlDocument(
     selectedByParent: Record<string, string>
 ): string {
     return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="cs">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -441,19 +441,19 @@ export function renderHtmlDocument(
                         ${renderAttachments(m.attachments)}
                     </div>
                     <div class="bubble-toolbar">
-                        <button class="toolbar-btn" data-action="copy" title="复制原始内容" aria-label="复制原始内容">
+                        <button class="toolbar-btn" data-action="copy" title="Kopírovat původní obsah" aria-label="Kopírovat původní obsah">
                             <svg class="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true">
                                 <path fill="currentColor" d="M16 1H6a2 2 0 0 0-2 2v12h2V3h10V1zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H10V7h9v14z"/>
                             </svg>
                         </button>
                         <div class="branch-controls">
-                            <button class="toolbar-btn" data-action="prev" title="上一版本" aria-label="上一版本">
+                            <button class="toolbar-btn" data-action="prev" title="Předchozí verze" aria-label="Předchozí verze">
                                 <svg class="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true">
                                     <path fill="currentColor" d="M15.41 7.41 14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
                                 </svg>
                             </button>
                             <span class="branch-count">1/1</span>
-                            <button class="toolbar-btn" data-action="next" title="下一版本" aria-label="下一版本">
+                            <button class="toolbar-btn" data-action="next" title="Další verze" aria-label="Další verze">
                                 <svg class="toolbar-icon" viewBox="0 0 24 24" aria-hidden="true">
                                     <path fill="currentColor" d="m8.59 16.59 1.41 1.41 6-6-6-6-1.41 1.41L13.17 12z"/>
                                 </svg>
@@ -520,7 +520,7 @@ export function renderHtmlDocument(
 
             const setCodeToggleState = (block, btn, collapsed) => {
                 block.dataset.collapsed = collapsed ? 'true' : 'false';
-                btn.textContent = collapsed ? '展开' : '收起';
+                btn.textContent = collapsed ? 'Rozbalit' : 'Sbalit';
                 btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
             };
 
@@ -549,13 +549,13 @@ export function renderHtmlDocument(
                     copyBtn.type = 'button';
                     copyBtn.className = 'code-btn';
                     copyBtn.setAttribute('data-code-action', 'copy');
-                    copyBtn.textContent = '复制';
+                    copyBtn.textContent = 'Kopírovat';
 
                     const toggleBtn = document.createElement('button');
                     toggleBtn.type = 'button';
                     toggleBtn.className = 'code-btn';
                     toggleBtn.setAttribute('data-code-action', 'toggle');
-                    toggleBtn.textContent = '展开';
+                    toggleBtn.textContent = 'Rozbalit';
                     toggleBtn.setAttribute('aria-expanded', 'false');
 
                     actions.append(copyBtn, toggleBtn);

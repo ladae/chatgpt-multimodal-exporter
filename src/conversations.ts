@@ -122,7 +122,7 @@ export async function collectAllConversationTasks(
         if (projId) addProjectConv(projId, id, it.title || '');
         else addRoot(id, it.title || '');
       });
-      if (progressCb) progressCb(3, `个人会话：${offset + arr.length}${page?.total ? `/${page.total}` : ''}`);
+      if (progressCb) progressCb(3, `Osobní chaty: ${offset + arr.length}${page?.total ? `/${page.total}` : ''}`);
       if (!arr.length || arr.length < limit || (page && page.total !== null && offset + limit >= page.total)) break;
       offset += limit;
       await sleep(120);
@@ -178,7 +178,7 @@ export async function collectAllConversationTasks(
           if (!it || !it.id) return;
           addProjectConv(pid, it.id, it.title || '');
         });
-        if (progressCb) progressCb(5, `项目 ${pid}：${cursor + arr.length}${page?.total ? `/${page.total}` : ''}`);
+        if (progressCb) progressCb(5, `Projekt ${pid}: ${cursor + arr.length}${page?.total ? `/${page.total}` : ''}`);
         if (!arr.length || arr.length < limit || (page && page.total !== null && cursor + limit >= page.total)) break;
         cursor += limit;
         await sleep(120);
@@ -276,7 +276,7 @@ export async function fetchConversationsBatch(
         results[i] = data;
         done++;
         const pct = total ? Math.round((done / total) * 60) + 10 : 10;
-        if (progressCb) progressCb(pct, `导出 JSON：${done}/${total}`);
+        if (progressCb) progressCb(pct, `Export JSON: ${done}/${total}`);
       } catch (e) {
         fatalErr = e;
         return;

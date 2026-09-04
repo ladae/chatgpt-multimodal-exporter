@@ -43,7 +43,7 @@ export function FilePreviewDialog({ candidates, onConfirm, onClose }: FilePrevie
     const handleConfirm = () => {
         const selected = candidates.filter((_, i) => selectedIndices.has(i));
         if (selected.length === 0) {
-            toast.error('请至少选择一个文件');
+            toast.error('Vyberte alespoň jeden soubor');
             return;
         }
         onConfirm(selected);
@@ -56,17 +56,17 @@ export function FilePreviewDialog({ candidates, onConfirm, onClose }: FilePrevie
                 <div className={CHATGPT_MODAL_BOX_CLASS}>
                     <div className={CHATGPT_MODAL_HEADER_CLASS}>
                         <div className={CHATGPT_MODAL_TITLE_CLASS}>
-                            可下载文件 ({candidates.length})
+                            Soubory ke stažení ({candidates.length})
                         </div>
                         <div className="cgptx-modal-actions">
                             <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={toggleAll}>
-                                全选/反选
+                                Vybrat vše / obrátit výběr
                             </button>
                             <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={handleConfirm}>
-                                下载选中
+                                Stáhnout vybrané
                             </button>
                             <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={onClose}>
-                                关闭
+                                Zavřít
                             </button>
                         </div>
                     </div>
@@ -74,16 +74,16 @@ export function FilePreviewDialog({ candidates, onConfirm, onClose }: FilePrevie
                     <div className={`${CHATGPT_PANEL_CLASS} cgptx-modal-panel`}>
                         <div className="cgptx-list">
                             {candidates.map((info, idx) => {
-                                const name = (info.meta && (info.meta.name || info.meta.file_name)) || info.file_id || info.pointer || '未命名';
+                                const name = (info.meta && (info.meta.name || info.meta.file_name)) || info.file_id || info.pointer || 'Bez názvu';
                                 const mime = (info.meta && (info.meta.mime_type || info.meta.file_type)) || (info.meta && info.meta.mime) || '';
                                 const size = info.meta?.size_bytes || info.meta?.size || info.meta?.file_size || info.meta?.file_size_bytes || null;
 
                                 const metaParts = [];
-                                metaParts.push(`来源: ${info.source || '未知'}`);
+                                metaParts.push(`Zdroj: ${info.source || 'Neznámý'}`);
                                 if (info.file_id) metaParts.push(`file_id: ${info.file_id}`);
                                 if (info.pointer && info.pointer !== info.file_id) metaParts.push(`pointer: ${info.pointer}`);
                                 if (mime) metaParts.push(`mime: ${mime}`);
-                                if (size) metaParts.push(`大小: ${formatBytes(size)}`);
+                                if (size) metaParts.push(`Velikost: ${formatBytes(size)}`);
 
                                 return (
                                     <div className="cgptx-item" key={idx}>
@@ -103,7 +103,7 @@ export function FilePreviewDialog({ candidates, onConfirm, onClose }: FilePrevie
 
                         <div className="cgptx-modal-actions cgptx-modal-tip">
                             <div className="cgptx-chip">
-                                点击“下载选中”将按列表顺序依次下载（含 /files 和 CDN 指针）
+                                Po kliknutí na „Stáhnout vybrané“ se soubory stáhnou postupně v pořadí seznamu (včetně /files a CDN odkazů).
                             </div>
                         </div>
                     </div>

@@ -37,7 +37,7 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
 
     const exporting = useSignal(false);
     const progress = useSignal<{ pct: number; text: string } | null>(null);
-    const statusText = useSignal('加载会话列表…');
+    const statusText = useSignal('Načítání seznamu chatů…');
 
     const cancelRef = useRef<{ cancel: boolean }>({ cancel: false });
 
@@ -64,12 +64,12 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
             const newGroups: GroupState[] = [];
             const rootsList = getRootsList(res);
             if (rootsList.length) {
-                newGroups.push({ label: '无项目', projectId: null, items: rootsList, collapsed: false });
+                newGroups.push({ label: 'Bez projektu', projectId: null, items: rootsList, collapsed: false });
             }
             (res.projects || []).forEach((p: Project) => {
                 const convs = Array.isArray(p.convs) ? p.convs : [];
                 newGroups.push({
-                    label: p.projectName || p.projectId || '未命名项目',
+                    label: p.projectName || p.projectId || 'Projekt bez názvu',
                     projectId: p.projectId,
                     items: convs,
                     collapsed: false
@@ -87,11 +87,11 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
 
             loading.value = false;
             progress.value = null;
-            statusText.value = `共 ${newGroups.reduce((n, g) => n + g.items.length, 0)} 条，已选 ${initialSet.size}`;
+            statusText.value = `Celkem ${newGroups.reduce((n, g) => n + g.items.length, 0)} chatů, vybráno ${initialSet.size}`;
         } catch (e: any) {
-            console.error('[ChatGPT-Multimodal-Exporter] 拉取列表失败', e);
+            console.error('[ChatGPT-Multimodal-Exporter] Načtení seznamu selhalo', e);
             error.value = e.message || String(e);
-            statusText.value = '拉取列表失败';
+            statusText.value = 'Načtení seznamu selhalo';
         }
     };
 
@@ -118,7 +118,7 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
             keys.forEach(k => newSet.delete(k));
         }
         selectedSet.value = newSet;
-        statusText.value = `已选 ${newSet.size} 条`;
+        statusText.value = `Vybráno ${newSet.size} chatů`;
     };
 
     const toggleItemSelect = (key: string) => {
@@ -126,7 +126,7 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
         if (newSet.has(key)) newSet.delete(key);
         else newSet.add(key);
         selectedSet.value = newSet;
-        statusText.value = `已选 ${newSet.size} 条`;
+        statusText.value = `Vybráno ${newSet.size} chatů`;
     };
 
     const toggleAll = () => {
@@ -143,7 +143,7 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
             allKeys.forEach(k => newSet.add(k));
         }
         selectedSet.value = newSet;
-        statusText.value = `已选 ${newSet.size} 条`;
+        statusText.value = `Vybráno ${newSet.size} chatů`;
     };
 
     const startExport = async () => {
@@ -153,14 +153,14 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
             .filter((t) => !!t.id);
 
         if (!tasks.length) {
-            toast.error('请至少选择一条会话');
+            toast.error('Vyberte alespoň jeden chat');
             return;
         }
 
         cancelRef.current.cancel = false;
         exporting.value = true;
-        statusText.value = '准备导出…';
-        progress.value = { pct: 0, text: '准备中' };
+        statusText.value = 'Příprava exportu…';
+        progress.value = { pct: 0, text: 'Příprava' };
 
         const projectMapForTasks = new Map<string, Project>();
         (listData.value.projects || []).forEach((p) => projectMapForTasks.set(p.projectId, p));
@@ -190,20 +190,20 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
             });
 
             if (cancelRef.current.cancel) {
-                statusText.value = '已取消';
-                toast.info('批量导出已取消');
+                statusText.value = 'Zrušeno';
+                toast.info('Hromadný export byl zrušen');
                 return;
             }
 
             const ts = new Date().toISOString().replace(/[:.]/g, '-');
             saveBlob(blob, `chatgpt-batch-${ts}.zip`);
-            progress.value = { pct: 100, text: '完成' };
-            statusText.value = '完成 ✅（已下载 ZIP）';
-            toast.success('批量导出完成');
+            progress.value = { pct: 100, text: 'Hotovo' };
+            statusText.value = 'Hotovo ✅ (ZIP byl stažen)';
+            toast.success('Hromadný export dokončen');
         } catch (e: any) {
-            console.error('[ChatGPT-Multimodal-Exporter] 批量导出失败', e);
-            toast.error('批量导出失败：' + (e && e.message ? e.message : e));
-            statusText.value = '失败';
+            console.error('[ChatGPT-Multimodal-Exporter] Hromadný export selhal', e);
+            toast.error('Hromadný export selhal: ' + (e && e.message ? e.message : e));
+            statusText.value = 'Selhalo';
         } finally {
             exporting.value = false;
             cancelRef.current.cancel = false;
@@ -212,7 +212,7 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
 
     const handleStop = () => {
         cancelRef.current.cancel = true;
-        statusText.value = '请求取消中…';
+        statusText.value = 'Probíhá rušení…';
     };
 
     return (
@@ -220,12 +220,12 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
             <div className={CHATGPT_MODAL_GRID_CLASS}>
                 <div className={CHATGPT_MODAL_BOX_CLASS}>
                     <div className={CHATGPT_MODAL_HEADER_CLASS}>
-                        <div className={CHATGPT_MODAL_TITLE_CLASS}>批量导出对话（JSON + 附件）</div>
+                        <div className={CHATGPT_MODAL_TITLE_CLASS}>Hromadný export chatů (JSON + přílohy)</div>
                         <div className="cgptx-modal-actions">
-                            <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={toggleAll} disabled={exporting.value || loading.value}>全选/反选</button>
-                            <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={startExport} disabled={exporting.value || loading.value}>开始导出</button>
-                            <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={handleStop} disabled={!exporting.value}>停止</button>
-                            <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={onClose}>关闭</button>
+                            <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={toggleAll} disabled={exporting.value || loading.value}>Vybrat vše / obrátit výběr</button>
+                            <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={startExport} disabled={exporting.value || loading.value}>Spustit export</button>
+                            <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={handleStop} disabled={!exporting.value}>Zastavit</button>
+                            <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={onClose}>Zavřít</button>
                         </div>
                     </div>
 
@@ -237,7 +237,7 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
                                 checked={includeAttachments.value}
                                 onChange={(checked) => includeAttachments.value = checked}
                                 disabled={exporting.value}
-                                label="包含附件（ZIP）"
+                                label="Zahrnout přílohy (ZIP)"
                             />
                         </div>
 
@@ -252,7 +252,7 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
                                             </div>
                                         </div>
                                     ) : (
-                                        <div>加载中...</div>
+                                        <div>Načítání...</div>
                                     )}
                                 </div>
                             )}
@@ -279,7 +279,7 @@ export function BatchExportDialog({ onClose }: BatchExportDialogProps) {
                                                 {group.collapsed ? '▶' : '▼'}
                                             </span>
                                             <div className="group-title" onClick={() => toggleGroupCollapse(gIdx)}>{group.label}</div>
-                                            <div className="group-count">{group.items.length} 条</div>
+                                            <div className="group-count">{group.items.length} chatů</div>
                                         </div>
 
                                         <div className="cgptx-group-list" style={{ display: group.collapsed ? 'none' : 'block' }}>

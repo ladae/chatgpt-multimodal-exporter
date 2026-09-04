@@ -145,16 +145,16 @@ export async function runAutoSaveCycle(forceFullScan = false) {
 
     const rootHandle = await getRootHandle();
     if (!rootHandle) {
-        autoSaveStore.setError('Auto-save not configured');
+        autoSaveStore.setError('Automatické ukládání není nakonfigurováno');
         return;
     }
 
     if (!(await verifyPermission(rootHandle, true))) {
-        autoSaveStore.setError('Permission denied');
+        autoSaveStore.setError('Přístup ke složce byl zamítnut');
         return;
     }
 
-    const modeLabel = forceFullScan ? 'Full Scan' : 'Auto-save';
+    const modeLabel = forceFullScan ? 'Úplné skenování' : 'Auto-save';
     autoSaveStore.setStatus('checking', `${modeLabel}: Checking for updates...`);
     Logger.info('AutoSave', `Starting ${modeLabel} cycle`);
 
@@ -263,9 +263,9 @@ export async function runAutoSaveCycle(forceFullScan = false) {
             }
 
             if (candidates.length === 0) {
-                autoSaveStore.setStatus('idle', 'No updates found');
+                autoSaveStore.setStatus('idle', 'Nebyly nalezeny žádné změny');
                 autoSaveStore.setLastRun(Date.now());
-                Logger.info('AutoSave', 'No updates found');
+                Logger.info('AutoSave', 'Nebyly nalezeny žádné změny');
                 return;
             }
 
@@ -303,7 +303,7 @@ export async function runAutoSaveCycle(forceFullScan = false) {
                 );
             }
 
-            autoSaveStore.setStatus('idle', 'All saved');
+            autoSaveStore.setStatus('idle', 'Vše uloženo');
             autoSaveStore.setLastRun(Date.now());
             autoSaveStore.resetError();
             Logger.info('AutoSave', 'Cycle completed successfully');
@@ -311,7 +311,7 @@ export async function runAutoSaveCycle(forceFullScan = false) {
 
     } catch (e: any) {
         Logger.error('AutoSave', 'Auto-save failed', e);
-        autoSaveStore.setError(e.message || 'Unknown error');
+        autoSaveStore.setError(e.message || 'Neznámá chyba');
     }
 }
 
@@ -371,7 +371,7 @@ export async function startAutoSaveLoop(intervalMs: number = 5 * 60 * 1000) {
     isStarted = true;
     stopRequested = false;
     Logger.info('AutoSave', `Initializing AutoSave system...`);
-    autoSaveStore.setStatus('idle', 'Starting...');
+    autoSaveStore.setStatus('idle', 'Spouštění...');
 
     // Initial check (Leader election logic)
     attemptLeaderElection();
@@ -400,7 +400,7 @@ async function attemptLeaderElection() {
         if (!acquired) {
             // We are Standby
             autoSaveStore.setRole('standby');
-            autoSaveStore.setStatus('idle', 'Standby: Another tab is auto-saving');
+            autoSaveStore.setStatus('idle', 'Pohotovost: automatické ukládání provádí jiná karta');
             autoSaveStore.setNextRun(0);
 
             // Wait and retry
@@ -431,6 +431,6 @@ export function stopAutoSaveLoop() {
         interruptSleep = null;
     }
 
-    autoSaveStore.setStatus('disabled', 'Auto-save disabled');
+    autoSaveStore.setStatus('disabled', 'Automatické ukládání vypnuto');
     Logger.info('AutoSave', 'Stopping loop requested');
 }

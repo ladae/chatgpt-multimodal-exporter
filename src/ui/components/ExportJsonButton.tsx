@@ -17,7 +17,7 @@ export function ExportJsonButton({ refreshCredStatus, onDataFetched }: ExportJso
         const id = convId();
         const pid = projectId();
         if (!id) {
-            toast.error('未检测到会话 ID，请在具体对话页面使用（URL 中应包含 /c/xxxx）。');
+            toast.error('Nebylo zjištěno ID chatu. Funkci použijte v konkrétním chatu (URL musí obsahovat /c/xxxx).');
             return;
         }
 
@@ -25,7 +25,7 @@ export function ExportJsonButton({ refreshCredStatus, onDataFetched }: ExportJso
 
         try {
             await refreshCredStatus();
-            if (!Cred.token) throw new Error('没有有效的 accessToken');
+            if (!Cred.token) throw new Error('Není k dispozici platný accessToken');
 
             const data = await fetchConversation(id, pid || undefined);
             if (onDataFetched) onDataFetched(data);
@@ -33,10 +33,10 @@ export function ExportJsonButton({ refreshCredStatus, onDataFetched }: ExportJso
             const safeTitle = sanitize(data?.title || '');
             const filename = `${safeTitle || 'chat'}_${id}.json`;
             saveJSON(data, filename);
-            toast.success('导出 JSON 完成');
+            toast.success('Export JSON dokončen');
         } catch (e: any) {
-            console.error('[ChatGPT-Multimodal-Exporter] 导出失败：', e);
-            toast.error('导出失败: ' + (e && e.message ? e.message : e));
+            console.error('[ChatGPT-Multimodal-Exporter] Export selhal: ', e);
+            toast.error('Export selhal: ' + (e && e.message ? e.message : e));
         } finally {
             setBusy(false);
         }
@@ -46,8 +46,8 @@ export function ExportJsonButton({ refreshCredStatus, onDataFetched }: ExportJso
         <button
             id="cgptx-mini-btn"
             className={CHATGPT_ICON_BUTTON_CLASS}
-            title="导出 JSON"
-            aria-label="导出 JSON"
+            title="Exportovat JSON"
+            aria-label="Exportovat JSON"
             onClick={handleJsonExport}
             disabled={busy}
         >

@@ -51,13 +51,13 @@ export function ActionButtons({ autoSaveState }: ActionButtonsProps) {
     }, [nextRun, isIdle, isDisabled]);
 
     // Tooltip construction
-    let tooltip = `自动保存设置\n状态: ${status}`;
+    let tooltip = `Nastavení automatického ukládání\nStav: ${status}`;
     if (role !== 'unknown') {
         tooltip += ` (${role === 'leader' ? 'Leader' : 'Standby'})`;
     }
     if (message) tooltip += `\n${message}`;
     if (lastError) tooltip += `\nError: ${lastError}`;
-    if (isDisabled) tooltip = "自动保存已关闭";
+    if (isDisabled) tooltip = "Automatické ukládání vypnuto";
 
     // Icon & Color Logic
     let iconContent;
@@ -151,8 +151,8 @@ export function ActionButtons({ autoSaveState }: ActionButtonsProps) {
             <button
                 id="cgptx-mini-btn-batch"
                 className={CHATGPT_ICON_BUTTON_CLASS}
-                title="批量导出"
-                aria-label="批量导出"
+                title="Hromadný export"
+                aria-label="Hromadný export"
                 onClick={handleBatchExport}
             >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -165,7 +165,7 @@ export function ActionButtons({ autoSaveState }: ActionButtonsProps) {
                     id="cgptx-mini-btn-autosave"
                     className={CHATGPT_ICON_BUTTON_CLASS}
                     title={tooltip}
-                    aria-label="自动保存设置"
+                    aria-label="Nastavení automatického ukládání"
                     onClick={handleAutoSaveClick}
                     style={btnStyle}
                 >

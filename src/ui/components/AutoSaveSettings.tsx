@@ -57,11 +57,11 @@ function ToggleSwitch({ checked, onChange, ariaLabel, disabled = false }: Toggle
 }
 
 function statusText(state: AutoSaveStatus['state']) {
-  if (state === 'idle') return '空闲';
-  if (state === 'checking') return '检查中';
-  if (state === 'saving') return '保存中';
-  if (state === 'disabled') return '已禁用';
-  return '错误';
+  if (state === 'idle') return 'Nečinný';
+  if (state === 'checking') return 'Kontrola';
+  if (state === 'saving') return 'Ukládání';
+  if (state === 'disabled') return 'Vypnuto';
+  return 'Chyba';
 }
 
 export function AutoSaveSettings({ status, onClose }: Props) {
@@ -82,7 +82,7 @@ export function AutoSaveSettings({ status, onClose }: Props) {
 
       setIntervalMinutes(initialInterval);
       setEnabled(isEnabledEffectively);
-      setRootPath(h ? h.name : '未选择');
+      setRootPath(h ? h.name : 'Nevybráno');
       setLoading(false);
     });
   }, []);
@@ -93,7 +93,7 @@ export function AutoSaveSettings({ status, onClose }: Props) {
       if (!handle) {
         const picked = await pickAndSaveRootHandle();
         if (!picked) {
-          toast.info('未开启自动保存');
+          toast.info('Automatické ukládání nebylo zapnuto');
           return;
         }
         handle = picked;
@@ -103,14 +103,14 @@ export function AutoSaveSettings({ status, onClose }: Props) {
       localStorage.setItem('chatgpt_exporter_autosave_enabled', 'true');
       setEnabled(true);
       startAutoSaveLoop(intervalMinutes * 60 * 1000);
-      toast.success('自动保存已开启');
+      toast.success('Automatické ukládání zapnuto');
       return;
     }
 
     localStorage.setItem('chatgpt_exporter_autosave_enabled', 'false');
     setEnabled(false);
     stopAutoSaveLoop();
-    toast.info('自动保存已暂停');
+    toast.info('Automatické ukládání pozastaveno');
   };
 
   const handleIntervalChange = (value: string) => {
@@ -127,7 +127,7 @@ export function AutoSaveSettings({ status, onClose }: Props) {
     if (!h) return;
 
     setRootPath(h.name);
-    toast.success('保存目录已更新');
+    toast.success('Složka pro ukládání byla změněna');
     if (enabled) {
       startAutoSaveLoop(intervalMinutes * 60 * 1000);
     }
@@ -136,19 +136,19 @@ export function AutoSaveSettings({ status, onClose }: Props) {
   const renderGeneralTab = () => (
     <section className="relative">
       <div className="flex min-h-15 items-center py-3 border-token-border-default border-b">
-        <h3 className="w-full text-lg font-normal">自动保存</h3>
+        <h3 className="w-full text-lg font-normal">Automatické ukládání</h3>
       </div>
 
       <div className={SETTINGS_ROW_CLASS}>
         <div className="w-full">
           <div className="flex items-center justify-between gap-3">
-            <div>状态</div>
+            <div>Stav</div>
             <span className={`cgptx-status-chip ${status.state}`}>{statusText(status.state)}</span>
           </div>
           {status.message && <div className="text-token-text-tertiary my-1 text-xs">{status.message}</div>}
           {status.lastRun > 0 && (
             <div className="text-token-text-tertiary my-1 text-xs">
-              上次运行: {new Date(status.lastRun).toLocaleString()}
+              Poslední spuštění: {new Date(status.lastRun).toLocaleString()}
             </div>
           )}
         </div>
@@ -157,12 +157,12 @@ export function AutoSaveSettings({ status, onClose }: Props) {
       <div className={SETTINGS_ROW_CLASS}>
         <div className="w-full">
           <div className="flex items-center justify-between gap-3">
-            <div>自动保存</div>
+            <div>Automatické ukládání</div>
             <div className="flex items-center gap-1">
               <ToggleSwitch
                 checked={enabled}
                 onChange={applyEnabled}
-                ariaLabel="自动保存"
+                ariaLabel="Automatické ukládání"
               />
             </div>
           </div>
@@ -172,7 +172,7 @@ export function AutoSaveSettings({ status, onClose }: Props) {
       <div className={SETTINGS_ROW_CLASS}>
         <div className="w-full">
           <div className="flex items-center justify-between gap-3">
-            <div>保存间隔 (分钟)</div>
+            <div>Interval ukládání (minuty)</div>
             <input
               className="cgptx-settings-number"
               type="number"
@@ -188,23 +188,23 @@ export function AutoSaveSettings({ status, onClose }: Props) {
       <div className={SETTINGS_ROW_CLASS}>
         <div className="w-full">
           <div className="flex items-center justify-between gap-3">
-            <div>手动任务</div>
+            <div>Ruční úlohy</div>
             <div className="cgptx-settings-actions-left">
               <button
                 className={CHATGPT_SECONDARY_BUTTON_CLASS}
-                onClick={() => { runAutoSave(); toast.info('已触发立即保存'); }}
+                onClick={() => { runAutoSave(); toast.info('Okamžité uložení spuštěno'); }}
                 disabled={status.state !== 'idle' && status.state !== 'error'}
-                title="Run standard incremental check"
+                title="Spustit běžnou přírůstkovou kontrolu"
               >
-                立即运行
+                Spustit nyní
               </button>
               <button
                 className={CHATGPT_SECONDARY_BUTTON_CLASS}
-                onClick={() => { runFullAutoSave(); toast.info('已触发全量扫描'); }}
+                onClick={() => { runFullAutoSave(); toast.info('Úplné skenování spuštěno'); }}
                 disabled={status.state !== 'idle' && status.state !== 'error'}
-                title="Checks ALL conversations (slow)"
+                title="Zkontroluje všechny chaty (pomalejší)"
               >
-                全部扫描
+                Úplné skenování
               </button>
             </div>
           </div>
@@ -212,7 +212,7 @@ export function AutoSaveSettings({ status, onClose }: Props) {
       </div>
 
       <div className="text-token-text-tertiary mt-3 text-xs">
-        更改后自动生效，无需点击“保存设置”。
+        Změny se projeví automaticky; není třeba potvrzovat nastavení.
       </div>
     </section>
   );
@@ -220,20 +220,20 @@ export function AutoSaveSettings({ status, onClose }: Props) {
   const renderStorageTab = () => (
     <section className="relative">
       <div className="flex min-h-15 items-center py-3 border-token-border-default border-b">
-        <h3 className="w-full text-lg font-normal">存储</h3>
+        <h3 className="w-full text-lg font-normal">Úložiště</h3>
       </div>
 
       <div className={SETTINGS_ROW_CLASS}>
         <div className="w-full">
           <div className="flex items-center justify-between gap-3">
-            <div>保存目录</div>
+            <div>Složka pro ukládání</div>
             <div className="flex items-center gap-2">
               <span className="cgptx-settings-folder" title={rootPath}>{rootPath}</span>
-              <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={changeFolder}>更改</button>
+              <button className={CHATGPT_SECONDARY_BUTTON_CLASS} onClick={changeFolder}>Změnit</button>
             </div>
           </div>
           <div className="text-token-text-tertiary my-1 text-xs">
-            建议使用独立目录，避免与手动导出文件混在一起。
+            Doporučujeme samostatnou složku, aby se soubory nemíchaly s ručními exporty.
           </div>
         </div>
       </div>
@@ -243,13 +243,13 @@ export function AutoSaveSettings({ status, onClose }: Props) {
   const renderAdvancedTab = () => (
     <section className="relative">
       <div className="flex min-h-15 items-center py-3 border-token-border-default border-b">
-        <h3 className="w-full text-lg font-normal">高级</h3>
+        <h3 className="w-full text-lg font-normal">Pokročilé</h3>
       </div>
 
       <div className={SETTINGS_ROW_CLASS}>
         <div className="w-full">
           <div className="flex items-center justify-between gap-3">
-            <div>调试模式 (实时生效)</div>
+            <div>Režim ladění (projeví se okamžitě)</div>
             <div className="flex items-center gap-1">
               <ToggleSwitch
                 checked={debug}
@@ -257,12 +257,12 @@ export function AutoSaveSettings({ status, onClose }: Props) {
                   setDebug(next);
                   Logger.setDebug(next);
                 }}
-                ariaLabel="调试模式"
+                ariaLabel="Režim ladění"
               />
             </div>
           </div>
           <div className="text-token-text-tertiary my-1 text-xs">
-            开启后会输出更详细日志，便于定位自动保存问题。
+            Po zapnutí se budou zapisovat podrobnější protokoly pro diagnostiku automatického ukládání.
           </div>
         </div>
       </div>
@@ -285,7 +285,7 @@ export function AutoSaveSettings({ status, onClose }: Props) {
                 <button
                   type="button"
                   className={CHATGPT_SETTINGS_LEFT_CLOSE_BUTTON_CLASS}
-                  aria-label="关闭自动保存设置"
+                  aria-label="Zavřít nastavení automatického ukládání"
                   onClick={onClose}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -302,7 +302,7 @@ export function AutoSaveSettings({ status, onClose }: Props) {
                 className={SETTINGS_TAB_CLASS}
                 onClick={() => setActiveTab('general')}
               >
-                常规
+                Obecné
               </button>
               <button
                 type="button"
@@ -312,7 +312,7 @@ export function AutoSaveSettings({ status, onClose }: Props) {
                 className={SETTINGS_TAB_CLASS}
                 onClick={() => setActiveTab('storage')}
               >
-                存储
+                Úložiště
               </button>
               <button
                 type="button"
@@ -322,7 +322,7 @@ export function AutoSaveSettings({ status, onClose }: Props) {
                 className={SETTINGS_TAB_CLASS}
                 onClick={() => setActiveTab('advanced')}
               >
-                高级
+                Pokročilé
               </button>
             </div>
 

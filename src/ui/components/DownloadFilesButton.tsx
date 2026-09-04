@@ -22,7 +22,7 @@ export function DownloadFilesButton({ refreshCredStatus, cachedData, onDataFetch
         const id = convId();
         const pid = projectId();
         if (!id) {
-            toast.error('未检测到会话 ID，请在具体对话页面使用（URL 中应包含 /c/xxxx）。');
+            toast.error('Nebylo zjištěno ID chatu. Funkci použijte v konkrétním chatu (URL musí obsahovat /c/xxxx).');
             return;
         }
 
@@ -30,7 +30,7 @@ export function DownloadFilesButton({ refreshCredStatus, cachedData, onDataFetch
 
         try {
             await refreshCredStatus();
-            if (!Cred.token) throw new Error('没有有效的 accessToken');
+            if (!Cred.token) throw new Error('Není k dispozici platný accessToken');
 
             let data = cachedData;
             if (!data || data.conversation_id !== id) {
@@ -40,7 +40,7 @@ export function DownloadFilesButton({ refreshCredStatus, cachedData, onDataFetch
 
             const cands = collectFileCandidates(data);
             if (!cands.length) {
-                toast.info('未找到可下载的文件/指针。');
+                toast.info('Nebyly nalezeny žádné soubory ani odkazy ke stažení.');
                 setBusy(false);
                 return;
             }
@@ -50,10 +50,10 @@ export function DownloadFilesButton({ refreshCredStatus, cachedData, onDataFetch
 
                 try {
                     const res = await downloadSelectedFiles(selected);
-                    toast.success(`文件下载完成，成功 ${res.ok}/${res.total}`);
+                    toast.success(`Stahování dokončeno, úspěšně ${res.ok}/${res.total}`);
                 } catch (e: any) {
-                    console.error('[ChatGPT-Multimodal-Exporter] 下载失败：', e);
-                    toast.error('下载失败: ' + (e && e.message ? e.message : e));
+                    console.error('[ChatGPT-Multimodal-Exporter] Stažení selhalo: ', e);
+                    toast.error('Stažení selhalo: ' + (e && e.message ? e.message : e));
                 } finally {
                     setBusy(false);
                 }
@@ -61,8 +61,8 @@ export function DownloadFilesButton({ refreshCredStatus, cachedData, onDataFetch
             setBusy(false);
 
         } catch (e: any) {
-            console.error('[ChatGPT-Multimodal-Exporter] 下载失败：', e);
-            toast.error('下载失败: ' + (e && e.message ? e.message : e));
+            console.error('[ChatGPT-Multimodal-Exporter] Stažení selhalo: ', e);
+            toast.error('Stažení selhalo: ' + (e && e.message ? e.message : e));
             setBusy(false);
         }
     };
@@ -71,8 +71,8 @@ export function DownloadFilesButton({ refreshCredStatus, cachedData, onDataFetch
         <button
             id="cgptx-mini-btn-files"
             className={CHATGPT_ICON_BUTTON_CLASS}
-            title={'下载当前对话的文件'}
-            aria-label="下载当前对话的文件"
+            title={'Stáhnout soubory aktuálního chatu'}
+            aria-label="Stáhnout soubory aktuálního chatu"
             onClick={handleFilesDownload}
             disabled={busy}
         >

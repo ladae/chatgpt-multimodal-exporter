@@ -5,7 +5,7 @@ import { Conversation, UserProfile } from './types';
 export async function fetchConversation(id: string, projectId?: string): Promise<Conversation> {
   if (!Cred.token) {
     const ok = await Cred.ensureViaSession();
-    if (!ok) throw new Error('无法获取登录凭证（accessToken）');
+    if (!ok) throw new Error('Nelze získat přihlašovací údaje (accessToken)');
   }
 
   const headers = Cred.getAuthHeaders();
@@ -20,17 +20,17 @@ export async function fetchConversation(id: string, projectId?: string): Promise
 
   // Use fetchWithRetry for the initial request
   let resp = await fetchWithRetry(url, init).catch(() => null);
-  if (!resp) throw new Error('网络错误');
+  if (!resp) throw new Error('Síťová chyba');
 
   if (resp.status === 401) {
     const ok = await Cred.ensureViaSession();
-    if (!ok) throw new Error('401：重新获取凭证失败');
+    if (!ok) throw new Error('401: Opětovné získání přihlašovacích údajů selhalo');
     const h2 = Cred.getAuthHeaders();
     if (projectId) h2.set('chatgpt-project-id', projectId);
     init.headers = h2;
     // Retry with new token, also using fetchWithRetry
     resp = await fetchWithRetry(url, init).catch(() => null);
-    if (!resp) throw new Error('网络错误（重试）');
+    if (!resp) throw new Error('Síťová chyba (opakovaný pokus)');
   }
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '');
@@ -50,7 +50,7 @@ export async function downloadSandboxFile({
 }): Promise<void> {
   if (!Cred.token) {
     const ok = await Cred.ensureViaSession();
-    if (!ok) throw new Error('没有 accessToken，无法下载 sandbox 文件');
+    if (!ok) throw new Error('Chybí accessToken, nelze stáhnout sandbox soubor');
   }
   const headers = Cred.getAuthHeaders();
   const pid = projectId();
@@ -70,10 +70,10 @@ export async function downloadSandboxFile({
   try {
     j = await resp.json();
   } catch (e) {
-    throw new Error('sandbox download meta 非 JSON');
+    throw new Error('Metadata sandbox download nejsou JSON');
   }
   const dl = j.download_url;
-  if (!dl) throw new Error(`sandbox download_url 缺失: ${JSON.stringify(j).slice(0, 200)}`);
+  if (!dl) throw new Error(`Sandbox download_url chybí: ${JSON.stringify(j).slice(0, 200)}`);
   const fname = sanitize(j.file_name || sandboxPath.split('/').pop() || 'sandbox_file');
   await gmDownload(dl, fname);
 }
@@ -89,7 +89,7 @@ export async function downloadSandboxFileBlob({
 }): Promise<{ blob: Blob; mime: string; filename: string }> {
   if (!Cred.token) {
     const ok = await Cred.ensureViaSession();
-    if (!ok) throw new Error('没有 accessToken，无法下载 sandbox 文件');
+    if (!ok) throw new Error('Chybí accessToken, nelze stáhnout sandbox soubor');
   }
   const headers = Cred.getAuthHeaders();
   const pid = projectId();
@@ -109,10 +109,10 @@ export async function downloadSandboxFileBlob({
   try {
     j = await resp.json();
   } catch (e) {
-    throw new Error('sandbox download meta 非 JSON');
+    throw new Error('Metadata sandbox download nejsou JSON');
   }
   const dl = j.download_url;
-  if (!dl) throw new Error(`sandbox download_url 缺失: ${JSON.stringify(j).slice(0, 200)}`);
+  if (!dl) throw new Error(`Sandbox download_url chybí: ${JSON.stringify(j).slice(0, 200)}`);
   const gmHeaders = {};
   const res = await gmFetchBlob(dl, gmHeaders);
   const fname = inferFilename(

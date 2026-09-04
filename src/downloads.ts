@@ -26,7 +26,7 @@ export async function downloadPointerOrFile(fileInfo: FileCandidate): Promise<vo
 
   if (pointer && pointer.startsWith('sandbox:')) {
     if (!convId || !messageId) {
-      console.warn('[ChatGPT-Multimodal-Exporter] sandbox pointer缺少 conversation/message id', pointer);
+      console.warn('[ChatGPT-Multimodal-Exporter] Sandbox pointer postrádá conversation/message id', pointer);
       return;
     }
     await downloadSandboxFile({ conversationId: convId, messageId, sandboxPath: pointer });
@@ -40,7 +40,7 @@ export async function downloadPointerOrFile(fileInfo: FileCandidate): Promise<vo
 
   if (!Cred.token) {
     const ok = await Cred.ensureViaSession();
-    if (!ok) throw new Error('没有 accessToken，无法下载文件');
+    if (!ok) throw new Error('Chybí accessToken, nelze stáhnout soubor');
   }
   const headers = Cred.getAuthHeaders();
   const pid = projectId();
@@ -57,12 +57,12 @@ export async function downloadPointerOrFile(fileInfo: FileCandidate): Promise<vo
     await gmDownload(downloadResult, fname);
     return;
   } else {
-    throw new Error(`无法获取 download_url，如果file-id正确，可能是链接过期 (file_id: ${fileId})`);
+    throw new Error(`Nelze získat download_url; pokud je file-id správné, odkaz mohl vypršet (file_id: ${fileId})`);
   }
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '');
-    throw new Error(`下载失败 ${resp.status}: ${txt.slice(0, 120)}`);
+    throw new Error(`Stažení selhalo ${resp.status}: ${txt.slice(0, 120)}`);
   }
 
   const blob = await resp.blob();
@@ -88,7 +88,7 @@ export async function downloadSelectedFiles(list: FileCandidate[]): Promise<Down
       await downloadPointerOrFile(info);
       okCount++;
     } catch (e) {
-      console.error('[ChatGPT-Multimodal-Exporter] 下载失败', info, e);
+      console.error('[ChatGPT-Multimodal-Exporter] Stažení selhalo', info, e);
     }
   }
   return { ok: okCount, total: list.length };
@@ -116,7 +116,7 @@ export async function downloadPointerOrFileAsBlob(
   }
 
   if (pointer && pointer.startsWith('sandbox:')) {
-    if (!convId || !messageId) throw new Error('sandbox pointer 缺少 conversation/message id');
+    if (!convId || !messageId) throw new Error('Sandbox pointer postrádá conversation/message id');
     return downloadSandboxFileBlob({ conversationId: convId, messageId, sandboxPath: pointer });
   }
 
@@ -127,7 +127,7 @@ export async function downloadPointerOrFileAsBlob(
 
   if (!Cred.token) {
     const ok = await Cred.ensureViaSession();
-    if (!ok) throw new Error('没有 accessToken，无法下载文件');
+    if (!ok) throw new Error('Chybí accessToken, nelze stáhnout soubor');
   }
   const headers = Cred.getAuthHeaders();
   if (projectId) headers.set('chatgpt-project-id', projectId);
@@ -150,12 +150,12 @@ export async function downloadPointerOrFileAsBlob(
       filename: fname,
     };
   } else {
-    throw new Error(`无法获取 download_url，如果file-id正确，可能是链接过期 (file_id: ${fileId})`);
+    throw new Error(`Nelze získat download_url; pokud je file-id správné, odkaz mohl vypršet (file_id: ${fileId})`);
   }
 
   if (!resp.ok) {
     const txt = await resp.text().catch(() => '');
-    throw new Error(`下载失败 ${resp.status}: ${txt.slice(0, 120)}`);
+    throw new Error(`Stažení selhalo ${resp.status}: ${txt.slice(0, 120)}`);
   }
 
   const blob = await resp.blob();

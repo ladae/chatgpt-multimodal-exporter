@@ -59,7 +59,7 @@ export async function runBatchExport({
   progressCb?: (pct: number, txt: string) => void;
   cancelRef?: { cancel: boolean };
 }): Promise<Blob> {
-  if (!tasks || !tasks.length) throw new Error('任务列表为空');
+  if (!tasks || !tasks.length) throw new Error('Seznam úloh je prázdný');
 
   // We build a tree object for fflate
   // Structure: { "folder": { "file.txt": [Uint8Array, { mtime }] } }
@@ -81,7 +81,7 @@ export async function runBatchExport({
   const folderNameByProjectId = buildProjectFolderNames(projects || []);
 
   const results = await fetchConversationsBatch(tasks, concurrency, progressCb, cancelRef);
-  if (cancelRef && cancelRef.cancel) throw new Error('用户已取消');
+  if (cancelRef && cancelRef.cancel) throw new Error('Zrušeno uživatelem');
 
   let idxRoot = 0;
   const projSeq: Record<string, number> = {};
@@ -92,7 +92,7 @@ export async function runBatchExport({
 
 
   for (let i = 0; i < tasks.length; i++) {
-    if (cancelRef && cancelRef.cancel) throw new Error('用户已取消');
+    if (cancelRef && cancelRef.cancel) throw new Error('Zrušeno uživatelem');
     const t = tasks[i];
     const data = results[i] as Conversation | null;
 
@@ -100,7 +100,7 @@ export async function runBatchExport({
       summary.failed.conversations.push({
         id: t.id,
         projectId: t.projectId || '',
-        reason: '为空',
+        reason: 'prázdné',
       });
       continue;
     }
@@ -158,7 +158,7 @@ export async function runBatchExport({
 
         const usedNames = new Set<string>();
         for (const c of candidates) {
-          if (cancelRef && cancelRef.cancel) throw new Error('用户已取消');
+          if (cancelRef && cancelRef.cancel) throw new Error('Zrušeno uživatelem');
           const pointerKey = c.pointer || c.file_id || '';
           const originalName = (c.meta && (c.meta.name || c.meta.file_name)) || '';
           let finalName = '';
@@ -214,13 +214,13 @@ export async function runBatchExport({
       console.warn('Failed to generate HTML for', t.id, e);
     }
 
-    if (progressCb) progressCb(80 + Math.round(((i + 1) / tasks.length) * 15), `处理：${i + 1}/${tasks.length}`);
+    if (progressCb) progressCb(80 + Math.round(((i + 1) / tasks.length) * 15), `Zpracování: ${i + 1}/${tasks.length}`);
   }
 
   // Add summary.json to root
   zipTree['summary.json'] = strToU8(JSON.stringify(summary, null, 2));
 
-  if (progressCb) progressCb(98, '压缩中…');
+  if (progressCb) progressCb(98, 'Komprese…');
 
   // Compress
   return new Promise<Blob>((resolve, reject) => {
