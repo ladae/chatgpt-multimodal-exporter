@@ -69,8 +69,11 @@ async function saveConversationToDisk(
 
     if (candidates.length > 0) {
         const attFolder = await ensureFolder(convFolder, 'attachments');
+        const reacquireAttFolder = async () => {
+            return await ensureFolder(convFolder, 'attachments');
+        };
         for (const c of candidates) {
-            const { entry, entries, savedMeta } = await downloadCandidateWithLedger(c, attFolder);
+            const { entry, entries, savedMeta } = await downloadCandidateWithLedger(c, attFolder, reacquireAttFolder);
             const allEntries = entries && entries.length > 0 ? entries : [entry];
             for (const e of allEntries) {
                 if (meta.asset_ledger) meta.asset_ledger.push(e);
@@ -374,11 +377,11 @@ export async function runAutoSaveCycle(forceFullScan = false) {
             autoSaveStore.setLastRun(Date.now());
 
             if (scanReport.status === 'COMPLETE') {
-                autoSaveStore.setStatus('idle', `Vše uloženo (${saved_conversation_ids.length} chatů, ${runAssetLedger.length} souborů)`);
+                autoSaveStore.setStatus('idle', `Vše uloženo (${saved_conversation_ids.length} chatů, ${scanReport.assets.total_candidate_assets} souborů)`);
                 autoSaveStore.resetError();
                 Logger.info('AutoSave', 'Cycle completed successfully (COMPLETE)');
             } else if (scanReport.status === 'COMPLETE_WITH_ASSET_ERRORS') {
-                autoSaveStore.setStatus('idle', `Uloženo s chybami souborů (${scanReport.assets.failed_count} chyb)`);
+                autoSaveStore.setStatus('idle', `Uloženo s chybami souborů (${scanReport.assets.failed_candidate_assets} chyb)`);
                 autoSaveStore.resetError();
                 Logger.warn('AutoSave', 'Cycle completed with asset errors (COMPLETE_WITH_ASSET_ERRORS)');
             } else if (scanReport.status === 'INCOMPLETE_CONVERSATIONS') {

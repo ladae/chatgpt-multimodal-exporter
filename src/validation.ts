@@ -68,9 +68,48 @@ export interface BuildScanReportParams {
   unhandledException?: any;
 }
 
+export interface AssetLedgerSummary {
+  total_candidate_assets: number;
+  saved_candidate_assets: number;
+  failed_candidate_assets: number;
+  total_download_attempts: number;
+  failed_download_attempts: number;
+}
+
+export function computeAssetLedgerSummary(ledger: AssetLedgerEntry[]): AssetLedgerSummary {
+  const candidateStatus = new Map<string, boolean>();
+
+  for (const entry of ledger) {
+    const key = `${entry.conversation_id}|${entry.message_id || ''}|${entry.candidate_type || ''}|${entry.original_ref || entry.file_id || ''}`;
+    if (entry.status === 'success') {
+      candidateStatus.set(key, true);
+    } else if (!candidateStatus.has(key)) {
+      candidateStatus.set(key, false);
+    }
+  }
+
+  let savedCandidates = 0;
+  let failedCandidates = 0;
+
+  for (const isSaved of candidateStatus.values()) {
+    if (isSaved) {
+      savedCandidates++;
+    } else {
+      failedCandidates++;
+    }
+  }
+
+  return {
+    total_candidate_assets: candidateStatus.size,
+    saved_candidate_assets: savedCandidates,
+    failed_candidate_assets: failedCandidates,
+    total_download_attempts: ledger.length,
+    failed_download_attempts: ledger.filter((e) => e.status === 'failure').length,
+  };
+}
+
 export function buildScanReport(params: BuildScanReportParams): ScanReport {
-  const failedAssetCount = params.assetLedger.filter((a) => a.status === 'failure').length;
-  const savedAssetCount = params.assetLedger.filter((a) => a.status === 'success').length;
+  const summary = computeAssetLedgerSummary(params.assetLedger);
 
   const status = evaluateValidationStatus({
     inventoryReport: params.inventoryReport,
@@ -78,8 +117,8 @@ export function buildScanReport(params: BuildScanReportParams): ScanReport {
     savedIds: params.savedIds,
     failedIds: params.failedIds,
     missingIds: params.missingIds,
-    totalAssets: params.assetLedger.length,
-    failedAssets: failedAssetCount,
+    totalAssets: summary.total_candidate_assets,
+    failedAssets: summary.failed_candidate_assets,
     unhandledException: params.unhandledException,
   });
 
@@ -101,9 +140,14 @@ export function buildScanReport(params: BuildScanReportParams): ScanReport {
       details: params.chatDetails,
     },
     assets: {
-      total_candidates: params.assetLedger.length,
-      saved_count: savedAssetCount,
-      failed_count: failedAssetCount,
+      total_candidate_assets: summary.total_candidate_assets,
+      saved_candidate_assets: summary.saved_candidate_assets,
+      failed_candidate_assets: summary.failed_candidate_assets,
+      total_download_attempts: summary.total_download_attempts,
+      failed_download_attempts: summary.failed_download_attempts,
+      total_candidates: summary.total_candidate_assets,
+      saved_count: summary.saved_candidate_assets,
+      failed_count: summary.failed_candidate_assets,
       ledger: params.assetLedger,
     },
   };

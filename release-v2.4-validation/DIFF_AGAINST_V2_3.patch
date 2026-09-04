@@ -1,0 +1,401 @@
+diff --git a/src/assetLedger.ts b/src/assetLedger.ts
+index 1e45397..a32bb16 100644
+--- a/src/assetLedger.ts
++++ b/src/assetLedger.ts
+@@ -32,6 +32,13 @@ export interface ProcessAssetResult {
+   };
+ }
+ 
++export function isValidFilesApiId(id: string | null | undefined): boolean {
++  if (!id || typeof id !== 'string') return false;
++  // Valid ChatGPT backend file IDs for files/download API start with 'file-' followed by alphanumeric/dash characters
++  // Internal library references like 'libfile_...' or mutated 'file_...' with underscore are not accepted by files API
++  return /^file-[a-zA-Z0-9_-]+$/.test(id);
++}
++
+ /**
+  * Downloads a candidate asset and records full ledger details.
+  * Fail-safe: Returns failure entry on error rather than throwing,
+@@ -39,7 +46,8 @@ export interface ProcessAssetResult {
+  */
+ export async function downloadCandidateWithLedger(
+   candidate: FileCandidate,
+-  attFolder: FileSystemDirectoryHandle
++  attFolder: FileSystemDirectoryHandle,
++  reacquireAttFolder?: () => Promise<FileSystemDirectoryHandle>
+ ): Promise<ProcessAssetResult> {
+   const convId = candidate.conversation_id || '';
+   const messageId = candidate.message_id || null;
+@@ -102,12 +110,14 @@ export async function downloadCandidateWithLedger(
+     currentId: string | null
+   ): Promise<ProcessAssetResult> => {
+     const safeName = sanitize(rawFilename);
+-    const localRelPath = `attachments/${safeName}`;
++    let actualSavedName = safeName;
+ 
+     if (!(await fileExists(attFolder, safeName))) {
+-      await writeFile(attFolder, safeName, blob);
++      actualSavedName = await writeFile(attFolder, safeName, blob, reacquireAttFolder);
+     }
+ 
++    const localRelPath = `attachments/${actualSavedName}`;
++
+     const successEntry: AssetLedgerEntry = {
+       conversation_id: convId,
+       message_id: messageId,
+@@ -126,7 +136,7 @@ export async function downloadCandidateWithLedger(
+     };
+ 
+     entries.push(successEntry);
+-    Logger.debug('AssetLedger', `Asset uložen (${usedMethod}): ${safeName}`);
++    Logger.debug('AssetLedger', `Asset uložen (${usedMethod}): ${actualSavedName}`);
+ 
+     return {
+       entry: successEntry,
+@@ -134,8 +144,8 @@ export async function downloadCandidateWithLedger(
+       savedMeta: {
+         pointer: pointer || '',
+         file_id: currentId || fileId || '',
+-        original_name: originalName || safeName,
+-        saved_as: safeName,
++        original_name: originalName || rawFilename || actualSavedName,
++        saved_as: actualSavedName,
+         size_bytes: blob.size,
+         mime,
+         source: candidateType,
+@@ -331,12 +341,16 @@ export async function downloadCandidateWithLedger(
+ 
+   // Step 2: library_file_id_fallback
+   if (libraryFileId && libraryFileId !== fileId && libraryFileId !== altFileId) {
+-    try {
+-      // Pass convId to authorize library file download within this conversation!
+-      const res = await tryFilesApiDownload(libraryFileId, null, convId);
+-      return await recordSuccess(res.blob, res.mime, res.filename, 'library_file_id_fallback', libraryFileId);
+-    } catch (err: any) {
+-      recordFailure('library_file_id_fallback', err, libraryFileId);
++    if (isValidFilesApiId(libraryFileId)) {
++      try {
++        // Pass convId to authorize library file download within this conversation!
++        const res = await tryFilesApiDownload(libraryFileId, null, convId);
++        return await recordSuccess(res.blob, res.mime, res.filename, 'library_file_id_fallback', libraryFileId);
++      } catch (err: any) {
++        recordFailure('library_file_id_fallback', err, libraryFileId);
++      }
++    } else {
++      Logger.debug('AssetLedger', `library_file_id "${libraryFileId}" není platným files API ID (fallback_not_applicable). Přeskakuji.`);
+     }
+   }
+ 
+diff --git a/src/autoSave.ts b/src/autoSave.ts
+index e90e5a4..a40a271 100644
+--- a/src/autoSave.ts
++++ b/src/autoSave.ts
+@@ -69,8 +69,11 @@ async function saveConversationToDisk(
+ 
+     if (candidates.length > 0) {
+         const attFolder = await ensureFolder(convFolder, 'attachments');
++        const reacquireAttFolder = async () => {
++            return await ensureFolder(convFolder, 'attachments');
++        };
+         for (const c of candidates) {
+-            const { entry, entries, savedMeta } = await downloadCandidateWithLedger(c, attFolder);
++            const { entry, entries, savedMeta } = await downloadCandidateWithLedger(c, attFolder, reacquireAttFolder);
+             const allEntries = entries && entries.length > 0 ? entries : [entry];
+             for (const e of allEntries) {
+                 if (meta.asset_ledger) meta.asset_ledger.push(e);
+@@ -374,11 +377,11 @@ export async function runAutoSaveCycle(forceFullScan = false) {
+             autoSaveStore.setLastRun(Date.now());
+ 
+             if (scanReport.status === 'COMPLETE') {
+-                autoSaveStore.setStatus('idle', `Vše uloženo (${saved_conversation_ids.length} chatů, ${runAssetLedger.length} souborů)`);
++                autoSaveStore.setStatus('idle', `Vše uloženo (${saved_conversation_ids.length} chatů, ${scanReport.assets.total_candidate_assets} souborů)`);
+                 autoSaveStore.resetError();
+                 Logger.info('AutoSave', 'Cycle completed successfully (COMPLETE)');
+             } else if (scanReport.status === 'COMPLETE_WITH_ASSET_ERRORS') {
+-                autoSaveStore.setStatus('idle', `Uloženo s chybami souborů (${scanReport.assets.failed_count} chyb)`);
++                autoSaveStore.setStatus('idle', `Uloženo s chybami souborů (${scanReport.assets.failed_candidate_assets} chyb)`);
+                 autoSaveStore.resetError();
+                 Logger.warn('AutoSave', 'Cycle completed with asset errors (COMPLETE_WITH_ASSET_ERRORS)');
+             } else if (scanReport.status === 'INCOMPLETE_CONVERSATIONS') {
+diff --git a/src/fileSystem.ts b/src/fileSystem.ts
+index 4729db4..e5ad2ce 100644
+--- a/src/fileSystem.ts
++++ b/src/fileSystem.ts
+@@ -1,3 +1,5 @@
++import { deterministicSafeFilename } from './utils';
++
+ // idb-keyval replaced by manual implementation
+ // Handles cannot be stored in localStorage. They must be in IndexedDB.
+ // Since I don't have idb-keyval, I'll implement a minimal IDB helper for the handle.
+@@ -81,18 +83,41 @@ function isTransientFsError(e: any): boolean {
+     return (
+         msg.includes('cached state') ||
+         msg.includes('state has changed') ||
++        msg.includes('could not be found') ||
+         e.name === 'InvalidStateError' ||
++        e.name === 'NotFoundError' ||
+         e.name === 'NoModificationAllowedError'
+     );
+ }
+ 
+-export async function ensureFolder(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemDirectoryHandle> {
++function isNameNotAllowedError(e: any): boolean {
++    if (!e) return false;
++    const msg = e.message || String(e);
++    return (
++        msg.includes('not allowed') ||
++        msg.includes('Name is not allowed') ||
++        e.name === 'TypeError' ||
++        e.name === 'NotAllowedError'
++    );
++}
++
++export async function ensureFolder(
++    parent: FileSystemDirectoryHandle,
++    name: string,
++    reacquireParent?: () => Promise<FileSystemDirectoryHandle>
++): Promise<FileSystemDirectoryHandle> {
++    let currentParent = parent;
+     for (let attempt = 0; attempt < 2; attempt++) {
+         try {
+             // @ts-ignore
+-            return await parent.getDirectoryHandle(name, { create: true });
++            return await currentParent.getDirectoryHandle(name, { create: true });
+         } catch (e: any) {
+             if (attempt === 0 && isTransientFsError(e)) {
++                if (reacquireParent) {
++                    try {
++                        currentParent = await reacquireParent();
++                    } catch {}
++                }
+                 await new Promise(r => setTimeout(r, 150));
+                 continue;
+             }
+@@ -100,28 +125,55 @@ export async function ensureFolder(parent: FileSystemDirectoryHandle, name: stri
+         }
+     }
+     // @ts-ignore
+-    return await parent.getDirectoryHandle(name, { create: true });
++    return await currentParent.getDirectoryHandle(name, { create: true });
+ }
+ 
+-export async function writeFile(parent: FileSystemDirectoryHandle, name: string, content: string | Blob | BufferSource) {
+-    for (let attempt = 0; attempt < 2; attempt++) {
++export async function writeFile(
++    parent: FileSystemDirectoryHandle,
++    name: string,
++    content: string | Blob | BufferSource,
++    reacquireParent?: () => Promise<FileSystemDirectoryHandle>
++): Promise<string> {
++    let currentParent = parent;
++    let targetName = name;
++
++    for (let attempt = 0; attempt < 3; attempt++) {
+         try {
+             // @ts-ignore
+-            const fileHandle = await parent.getFileHandle(name, { create: true });
++            const fileHandle = await currentParent.getFileHandle(targetName, { create: true });
+             // @ts-ignore
+             const writable = await fileHandle.createWritable();
+             await writable.write(content);
+             await writable.close();
+-            return;
++            return targetName;
+         } catch (e: any) {
+-            if (attempt === 0 && isTransientFsError(e)) {
+-                console.warn(`[fileSystem] writeFile "${name}" narazil na přechodnou chybu stavu handle (${e.message}). Opakuji za 150ms...`);
+-                await new Promise(r => setTimeout(r, 150));
++            // 1. Fallback for illegal filenames rejected by Chromium / OS
++            if (targetName === name && isNameNotAllowedError(e)) {
++                const fallbackName = deterministicSafeFilename(name);
++                console.warn(`[fileSystem] getFileHandle "${name}" odmítnuto (${e.message}). Používám bezpečný fallback název "${fallbackName}".`);
++                targetName = fallbackName;
+                 continue;
+             }
++
++            // 2. Transient / stale handle errors
++            if (isTransientFsError(e)) {
++                if (reacquireParent) {
++                    try {
++                        console.warn(`[fileSystem] writeFile "${targetName}" narazil na chybu handle (${e.message}). Znovu získávám parent handle...`);
++                        currentParent = await reacquireParent();
++                    } catch (reacquireErr) {
++                        console.warn('[fileSystem] Selhalo znovuzískání parent handle:', reacquireErr);
++                    }
++                }
++                if (attempt < 2) {
++                    await new Promise(r => setTimeout(r, 150));
++                    continue;
++                }
++            }
+             throw e;
+         }
+     }
++    return targetName;
+ }
+ 
+ export async function fileExists(parent: FileSystemDirectoryHandle, name: string): Promise<boolean> {
+diff --git a/src/types.ts b/src/types.ts
+index 5b38720..218d35c 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -257,6 +257,11 @@ export interface ScanReport {
+     }[];
+   };
+   assets: {
++    total_candidate_assets: number;
++    saved_candidate_assets: number;
++    failed_candidate_assets: number;
++    total_download_attempts: number;
++    failed_download_attempts: number;
+     total_candidates: number;
+     saved_count: number;
+     failed_count: number;
+diff --git a/src/utils.ts b/src/utils.ts
+index 9cd2cb6..5d39f17 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -6,19 +6,52 @@ const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
+ 
+ export const sanitize = (s: string): string => {
+   if (!s || typeof s !== 'string') return 'untitled';
+-  // 1. Remove control characters and illegal filesystem characters
+-  let cleaned = s.replace(/[\x00-\x1f\x7f\\/:*?"<>|]+/g, '_').trim();
+-  // 2. Strip trailing dots and spaces (strictly prohibited on Windows / File System Access API)
+-  cleaned = cleaned.replace(/[. ]+$/, '');
+-  // 3. Fallback if string is empty
+-  if (!cleaned) cleaned = 'untitled';
++  // 1. Extract basename if input contains forward/back slashes
++  const rawName = s.split(/[/\\]/).pop() || s;
++
++  // 2. Remove control characters and illegal filesystem characters
++  let cleaned = rawName.replace(/[\x00-\x1f\x7f\\/:*?"<>|]+/g, '_').trim();
++
++  // 3. Separate extension from stem to avoid truncating extension or slicing right at the dot
++  const lastDot = cleaned.lastIndexOf('.');
++  let stem = cleaned;
++  let ext = '';
++  if (lastDot > 0 && lastDot < cleaned.length - 1) {
++    stem = cleaned.slice(0, lastDot);
++    ext = cleaned.slice(lastDot);
++  }
++
++  // Strip trailing dots and spaces from stem
++  stem = stem.replace(/[. ]+$/, '').trim();
++  if (!stem) stem = 'untitled';
++
++  // Truncate stem so total length including extension doesn't exceed 80 chars
++  const maxStemLen = Math.max(1, 80 - ext.length);
++  stem = stem.slice(0, maxStemLen).replace(/[. ]+$/, '').trim();
++  if (!stem) stem = 'untitled';
++
++  cleaned = `${stem}${ext}`;
++
+   // 4. Prefix DOS reserved device names (con, prn, aux, nul, com1-9, lpt1-9)
+   if (WINDOWS_RESERVED_NAMES.test(cleaned)) {
+     cleaned = `_${cleaned}`;
+   }
+-  return cleaned.slice(0, 80);
++  return cleaned;
+ };
+ 
++export function deterministicSafeFilename(originalName: string): string {
++  const extMatch = (originalName || '').match(/\.[a-zA-Z0-9_]+$/);
++  const ext = extMatch ? extMatch[0] : '';
++  let hash = 0;
++  const str = originalName || 'file';
++  for (let i = 0; i < str.length; i++) {
++    hash = ((hash << 5) - hash) + str.charCodeAt(i);
++    hash |= 0;
++  }
++  const hex = Math.abs(hash).toString(16).padStart(8, '0').slice(0, 8);
++  return `asset_${hex}${ext}`;
++}
++
+ export const isInlinePointer = (p: string): boolean => {
+   if (!p) return false;
+   const prefixes = [
+diff --git a/src/validation.ts b/src/validation.ts
+index b97e1b2..50d148a 100644
+--- a/src/validation.ts
++++ b/src/validation.ts
+@@ -68,9 +68,48 @@ export interface BuildScanReportParams {
+   unhandledException?: any;
+ }
+ 
++export interface AssetLedgerSummary {
++  total_candidate_assets: number;
++  saved_candidate_assets: number;
++  failed_candidate_assets: number;
++  total_download_attempts: number;
++  failed_download_attempts: number;
++}
++
++export function computeAssetLedgerSummary(ledger: AssetLedgerEntry[]): AssetLedgerSummary {
++  const candidateStatus = new Map<string, boolean>();
++
++  for (const entry of ledger) {
++    const key = `${entry.conversation_id}|${entry.message_id || ''}|${entry.candidate_type || ''}|${entry.original_ref || entry.file_id || ''}`;
++    if (entry.status === 'success') {
++      candidateStatus.set(key, true);
++    } else if (!candidateStatus.has(key)) {
++      candidateStatus.set(key, false);
++    }
++  }
++
++  let savedCandidates = 0;
++  let failedCandidates = 0;
++
++  for (const isSaved of candidateStatus.values()) {
++    if (isSaved) {
++      savedCandidates++;
++    } else {
++      failedCandidates++;
++    }
++  }
++
++  return {
++    total_candidate_assets: candidateStatus.size,
++    saved_candidate_assets: savedCandidates,
++    failed_candidate_assets: failedCandidates,
++    total_download_attempts: ledger.length,
++    failed_download_attempts: ledger.filter((e) => e.status === 'failure').length,
++  };
++}
++
+ export function buildScanReport(params: BuildScanReportParams): ScanReport {
+-  const failedAssetCount = params.assetLedger.filter((a) => a.status === 'failure').length;
+-  const savedAssetCount = params.assetLedger.filter((a) => a.status === 'success').length;
++  const summary = computeAssetLedgerSummary(params.assetLedger);
+ 
+   const status = evaluateValidationStatus({
+     inventoryReport: params.inventoryReport,
+@@ -78,8 +117,8 @@ export function buildScanReport(params: BuildScanReportParams): ScanReport {
+     savedIds: params.savedIds,
+     failedIds: params.failedIds,
+     missingIds: params.missingIds,
+-    totalAssets: params.assetLedger.length,
+-    failedAssets: failedAssetCount,
++    totalAssets: summary.total_candidate_assets,
++    failedAssets: summary.failed_candidate_assets,
+     unhandledException: params.unhandledException,
+   });
+ 
+@@ -101,9 +140,14 @@ export function buildScanReport(params: BuildScanReportParams): ScanReport {
+       details: params.chatDetails,
+     },
+     assets: {
+-      total_candidates: params.assetLedger.length,
+-      saved_count: savedAssetCount,
+-      failed_count: failedAssetCount,
++      total_candidate_assets: summary.total_candidate_assets,
++      saved_candidate_assets: summary.saved_candidate_assets,
++      failed_candidate_assets: summary.failed_candidate_assets,
++      total_download_attempts: summary.total_download_attempts,
++      failed_download_attempts: summary.failed_download_attempts,
++      total_candidates: summary.total_candidate_assets,
++      saved_count: summary.saved_candidate_assets,
++      failed_count: summary.failed_candidate_assets,
+       ledger: params.assetLedger,
+     },
+   };

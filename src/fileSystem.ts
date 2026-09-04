@@ -1,3 +1,5 @@
+import { deterministicSafeFilename } from './utils';
+
 // idb-keyval replaced by manual implementation
 // Handles cannot be stored in localStorage. They must be in IndexedDB.
 // Since I don't have idb-keyval, I'll implement a minimal IDB helper for the handle.
@@ -81,18 +83,41 @@ function isTransientFsError(e: any): boolean {
     return (
         msg.includes('cached state') ||
         msg.includes('state has changed') ||
+        msg.includes('could not be found') ||
         e.name === 'InvalidStateError' ||
+        e.name === 'NotFoundError' ||
         e.name === 'NoModificationAllowedError'
     );
 }
 
-export async function ensureFolder(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemDirectoryHandle> {
+function isNameNotAllowedError(e: any): boolean {
+    if (!e) return false;
+    const msg = e.message || String(e);
+    return (
+        msg.includes('not allowed') ||
+        msg.includes('Name is not allowed') ||
+        e.name === 'TypeError' ||
+        e.name === 'NotAllowedError'
+    );
+}
+
+export async function ensureFolder(
+    parent: FileSystemDirectoryHandle,
+    name: string,
+    reacquireParent?: () => Promise<FileSystemDirectoryHandle>
+): Promise<FileSystemDirectoryHandle> {
+    let currentParent = parent;
     for (let attempt = 0; attempt < 2; attempt++) {
         try {
             // @ts-ignore
-            return await parent.getDirectoryHandle(name, { create: true });
+            return await currentParent.getDirectoryHandle(name, { create: true });
         } catch (e: any) {
             if (attempt === 0 && isTransientFsError(e)) {
+                if (reacquireParent) {
+                    try {
+                        currentParent = await reacquireParent();
+                    } catch {}
+                }
                 await new Promise(r => setTimeout(r, 150));
                 continue;
             }
@@ -100,28 +125,55 @@ export async function ensureFolder(parent: FileSystemDirectoryHandle, name: stri
         }
     }
     // @ts-ignore
-    return await parent.getDirectoryHandle(name, { create: true });
+    return await currentParent.getDirectoryHandle(name, { create: true });
 }
 
-export async function writeFile(parent: FileSystemDirectoryHandle, name: string, content: string | Blob | BufferSource) {
-    for (let attempt = 0; attempt < 2; attempt++) {
+export async function writeFile(
+    parent: FileSystemDirectoryHandle,
+    name: string,
+    content: string | Blob | BufferSource,
+    reacquireParent?: () => Promise<FileSystemDirectoryHandle>
+): Promise<string> {
+    let currentParent = parent;
+    let targetName = name;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
         try {
             // @ts-ignore
-            const fileHandle = await parent.getFileHandle(name, { create: true });
+            const fileHandle = await currentParent.getFileHandle(targetName, { create: true });
             // @ts-ignore
             const writable = await fileHandle.createWritable();
             await writable.write(content);
             await writable.close();
-            return;
+            return targetName;
         } catch (e: any) {
-            if (attempt === 0 && isTransientFsError(e)) {
-                console.warn(`[fileSystem] writeFile "${name}" narazil na přechodnou chybu stavu handle (${e.message}). Opakuji za 150ms...`);
-                await new Promise(r => setTimeout(r, 150));
+            // 1. Fallback for illegal filenames rejected by Chromium / OS
+            if (targetName === name && isNameNotAllowedError(e)) {
+                const fallbackName = deterministicSafeFilename(name);
+                console.warn(`[fileSystem] getFileHandle "${name}" odmítnuto (${e.message}). Používám bezpečný fallback název "${fallbackName}".`);
+                targetName = fallbackName;
                 continue;
+            }
+
+            // 2. Transient / stale handle errors
+            if (isTransientFsError(e)) {
+                if (reacquireParent) {
+                    try {
+                        console.warn(`[fileSystem] writeFile "${targetName}" narazil na chybu handle (${e.message}). Znovu získávám parent handle...`);
+                        currentParent = await reacquireParent();
+                    } catch (reacquireErr) {
+                        console.warn('[fileSystem] Selhalo znovuzískání parent handle:', reacquireErr);
+                    }
+                }
+                if (attempt < 2) {
+                    await new Promise(r => setTimeout(r, 150));
+                    continue;
+                }
             }
             throw e;
         }
     }
+    return targetName;
 }
 
 export async function fileExists(parent: FileSystemDirectoryHandle, name: string): Promise<boolean> {

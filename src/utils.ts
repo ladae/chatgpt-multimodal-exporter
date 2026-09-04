@@ -6,18 +6,51 @@ const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 
 export const sanitize = (s: string): string => {
   if (!s || typeof s !== 'string') return 'untitled';
-  // 1. Remove control characters and illegal filesystem characters
-  let cleaned = s.replace(/[\x00-\x1f\x7f\\/:*?"<>|]+/g, '_').trim();
-  // 2. Strip trailing dots and spaces (strictly prohibited on Windows / File System Access API)
-  cleaned = cleaned.replace(/[. ]+$/, '');
-  // 3. Fallback if string is empty
-  if (!cleaned) cleaned = 'untitled';
+  // 1. Extract basename if input contains forward/back slashes
+  const rawName = s.split(/[/\\]/).pop() || s;
+
+  // 2. Remove control characters and illegal filesystem characters
+  let cleaned = rawName.replace(/[\x00-\x1f\x7f\\/:*?"<>|]+/g, '_').trim();
+
+  // 3. Separate extension from stem to avoid truncating extension or slicing right at the dot
+  const lastDot = cleaned.lastIndexOf('.');
+  let stem = cleaned;
+  let ext = '';
+  if (lastDot > 0 && lastDot < cleaned.length - 1) {
+    stem = cleaned.slice(0, lastDot);
+    ext = cleaned.slice(lastDot);
+  }
+
+  // Strip trailing dots and spaces from stem
+  stem = stem.replace(/[. ]+$/, '').trim();
+  if (!stem) stem = 'untitled';
+
+  // Truncate stem so total length including extension doesn't exceed 80 chars
+  const maxStemLen = Math.max(1, 80 - ext.length);
+  stem = stem.slice(0, maxStemLen).replace(/[. ]+$/, '').trim();
+  if (!stem) stem = 'untitled';
+
+  cleaned = `${stem}${ext}`;
+
   // 4. Prefix DOS reserved device names (con, prn, aux, nul, com1-9, lpt1-9)
   if (WINDOWS_RESERVED_NAMES.test(cleaned)) {
     cleaned = `_${cleaned}`;
   }
-  return cleaned.slice(0, 80);
+  return cleaned;
 };
+
+export function deterministicSafeFilename(originalName: string): string {
+  const extMatch = (originalName || '').match(/\.[a-zA-Z0-9_]+$/);
+  const ext = extMatch ? extMatch[0] : '';
+  let hash = 0;
+  const str = originalName || 'file';
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  const hex = Math.abs(hash).toString(16).padStart(8, '0').slice(0, 8);
+  return `asset_${hex}${ext}`;
+}
 
 export const isInlinePointer = (p: string): boolean => {
   if (!p) return false;

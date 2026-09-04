@@ -32,6 +32,13 @@ export interface ProcessAssetResult {
   };
 }
 
+export function isValidFilesApiId(id: string | null | undefined): boolean {
+  if (!id || typeof id !== 'string') return false;
+  // Valid ChatGPT backend file IDs for files/download API start with 'file-' followed by alphanumeric/dash characters
+  // Internal library references like 'libfile_...' or mutated 'file_...' with underscore are not accepted by files API
+  return /^file-[a-zA-Z0-9_-]+$/.test(id);
+}
+
 /**
  * Downloads a candidate asset and records full ledger details.
  * Fail-safe: Returns failure entry on error rather than throwing,
@@ -39,7 +46,8 @@ export interface ProcessAssetResult {
  */
 export async function downloadCandidateWithLedger(
   candidate: FileCandidate,
-  attFolder: FileSystemDirectoryHandle
+  attFolder: FileSystemDirectoryHandle,
+  reacquireAttFolder?: () => Promise<FileSystemDirectoryHandle>
 ): Promise<ProcessAssetResult> {
   const convId = candidate.conversation_id || '';
   const messageId = candidate.message_id || null;
@@ -102,11 +110,13 @@ export async function downloadCandidateWithLedger(
     currentId: string | null
   ): Promise<ProcessAssetResult> => {
     const safeName = sanitize(rawFilename);
-    const localRelPath = `attachments/${safeName}`;
+    let actualSavedName = safeName;
 
     if (!(await fileExists(attFolder, safeName))) {
-      await writeFile(attFolder, safeName, blob);
+      actualSavedName = await writeFile(attFolder, safeName, blob, reacquireAttFolder);
     }
+
+    const localRelPath = `attachments/${actualSavedName}`;
 
     const successEntry: AssetLedgerEntry = {
       conversation_id: convId,
@@ -126,7 +136,7 @@ export async function downloadCandidateWithLedger(
     };
 
     entries.push(successEntry);
-    Logger.debug('AssetLedger', `Asset uložen (${usedMethod}): ${safeName}`);
+    Logger.debug('AssetLedger', `Asset uložen (${usedMethod}): ${actualSavedName}`);
 
     return {
       entry: successEntry,
@@ -134,8 +144,8 @@ export async function downloadCandidateWithLedger(
       savedMeta: {
         pointer: pointer || '',
         file_id: currentId || fileId || '',
-        original_name: originalName || safeName,
-        saved_as: safeName,
+        original_name: originalName || rawFilename || actualSavedName,
+        saved_as: actualSavedName,
         size_bytes: blob.size,
         mime,
         source: candidateType,
@@ -331,12 +341,16 @@ export async function downloadCandidateWithLedger(
 
   // Step 2: library_file_id_fallback
   if (libraryFileId && libraryFileId !== fileId && libraryFileId !== altFileId) {
-    try {
-      // Pass convId to authorize library file download within this conversation!
-      const res = await tryFilesApiDownload(libraryFileId, null, convId);
-      return await recordSuccess(res.blob, res.mime, res.filename, 'library_file_id_fallback', libraryFileId);
-    } catch (err: any) {
-      recordFailure('library_file_id_fallback', err, libraryFileId);
+    if (isValidFilesApiId(libraryFileId)) {
+      try {
+        // Pass convId to authorize library file download within this conversation!
+        const res = await tryFilesApiDownload(libraryFileId, null, convId);
+        return await recordSuccess(res.blob, res.mime, res.filename, 'library_file_id_fallback', libraryFileId);
+      } catch (err: any) {
+        recordFailure('library_file_id_fallback', err, libraryFileId);
+      }
+    } else {
+      Logger.debug('AssetLedger', `library_file_id "${libraryFileId}" není platným files API ID (fallback_not_applicable). Přeskakuji.`);
     }
   }
 

@@ -257,6 +257,11 @@ export interface ScanReport {
     }[];
   };
   assets: {
+    total_candidate_assets: number;
+    saved_candidate_assets: number;
+    failed_candidate_assets: number;
+    total_download_attempts: number;
+    failed_download_attempts: number;
     total_candidates: number;
     saved_count: number;
     failed_count: number;
